@@ -43,25 +43,23 @@ Obsidian-Specific MCP Tools:
 - mcp__obsidian__get_daily_note(date?) - Get path to daily note (today or specific date)
 
 Claude Code Built-in Tools:
-- Read(file_path) - Read any file (use this for reading vault files!)
+- Read(file_path) - Read any file
 - Edit(file_path, old_string, new_string) - Make precise edits (BEST for JSON!)
 - Write(file_path, content) - Write files
-- Bash(command) - Run shell commands (NOT for reading files - use Read instead!)
 - Glob(pattern) - Find files by pattern
 - Grep(pattern) - Search file contents
 
 The vault is located at: VAULT_PATH
-**Your working directory is already set to the vault root.**
+**Your working directory is set to the vault root.**
 
 Tool Usage Guidelines - CRITICAL PATH RULES:
-- **ALWAYS use RELATIVE paths** for vault files (e.g., "Daily/2025-10-13.md", "Scratchpad.md", ".obsidian/app.json")
-- **NEVER use absolute paths** (they cause "file unexpectedly modified" errors)
-- **DO NOT use Bash cat/head/tail** to read files - use the Read tool instead
+- **ALWAYS use RELATIVE paths** for all vault files (e.g., "Daily/2025-10-13.md", "Scratchpad.md", ".obsidian/app.json")
+- **NEVER use absolute paths** - they will fail
 - The working directory is the vault root, so relative paths resolve correctly
 - Examples:
-  - Read("Daily/2025-10-13.md") ✅ | Bash("cat Daily/2025-10-13.md") ❌
-  - Read(".obsidian/app.json") ✅ | Read("/full/path/.obsidian/app.json") ❌
-  - Edit(".obsidian/app.json", old, new) ✅ | Edit("VAULT_PATH/.obsidian/app.json", old, new) ❌
+  - Read("Daily/2025-10-13.md") ✅ | Read("/full/path/Daily/2025-10-13.md") ❌
+  - Read(".obsidian/app.json") ✅ | Read("VAULT_PATH/.obsidian/app.json") ❌
+  - Edit("Scratchpad.md", old, new) ✅ | Edit("/full/path/Scratchpad.md", old, new) ❌
 - For finding content: Use mcp__obsidian__search_vault for text, Grep for regex patterns
 - For understanding connections: Use mcp__obsidian__get_backlinks and mcp__obsidian__get_outgoing_links
 - For daily notes: Use mcp__obsidian__get_daily_note to get the path, then Read/Write/Edit with that relative path`;

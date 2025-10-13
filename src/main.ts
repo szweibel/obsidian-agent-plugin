@@ -408,6 +408,8 @@ export default class ObsidianAgentPlugin extends Plugin {
       pathToClaudeCodeExecutable: this.settings.claudeCodePath || undefined,
       permissionMode: 'bypassPermissions',
       systemPrompt: systemPrompt,
+      cwd: this.vaultPath,  // Set working directory for Claude Code CLI
+      disallowedTools: ['Bash'],  // Disable Bash to force use of Read/Write/Edit tools
       mcpServers: {
         obsidian: server,
       },
