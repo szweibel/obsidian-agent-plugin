@@ -6,6 +6,7 @@ import * as path from 'path';
 export interface ObsidianAgentSettings {
   claudeCodePath: string;
   customWorkflow: string;
+  customMcpConfigPath: string;
 }
 
 // This is hardcoded infrastructure that users shouldn't edit
@@ -140,6 +141,7 @@ WHEN PROCESSING:
 export const DEFAULT_SETTINGS: ObsidianAgentSettings = {
   claudeCodePath: '',
   customWorkflow: DEFAULT_WORKFLOW,
+  customMcpConfigPath: '',
 };
 
 async function detectClaudeCodePath(): Promise<string | null> {
@@ -215,6 +217,24 @@ export class ObsidianAgentSettingTab extends PluginSettingTab {
           } else {
             alert('Claude Code CLI not found. Please install Claude Code or set the path manually.');
           }
+        }));
+
+    // Custom Tools Config
+    containerEl.createEl('h3', { text: 'Custom Tools' });
+    containerEl.createEl('p', {
+      text: 'Add your own tools by wrapping external scripts/commands. Tool commands are OS-specific (e.g., use "wsl python3" on Windows with WSL, "python3" on Linux/macOS).',
+      cls: 'setting-item-description'
+    });
+
+    new Setting(containerEl)
+      .setName('Custom Tools Config Path')
+      .setDesc('Path to JSON file with custom tool definitions. Supports ~ for home directory, absolute paths (C:\\ or /), or relative to vault.')
+      .addText(text => text
+        .setPlaceholder('~/my-tools.json')
+        .setValue(this.plugin.settings.customMcpConfigPath)
+        .onChange(async (value) => {
+          this.plugin.settings.customMcpConfigPath = value;
+          await this.plugin.saveSettings();
         }));
 
     // Custom Workflow

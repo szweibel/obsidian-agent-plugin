@@ -38,6 +38,12 @@ export default class ObsidianAgentPlugin extends Plugin {
     this.addCommand({
       id: 'open-agent-chat',
       name: 'Open Agent Chat',
+      hotkeys: [
+        {
+          modifiers: ['Mod', 'Shift'],
+          key: 'A',
+        }
+      ],
       callback: () => {
         this.activateView();
       }
@@ -66,10 +72,176 @@ export default class ObsidianAgentPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  createTools() {
+  async loadCustomTools(): Promise<any[]> {
+    if (!this.settings.customMcpConfigPath) {
+      return [];
+    }
+
+    try {
+      let configPath = this.settings.customMcpConfigPath.trim();
+
+      // Handle ~ expansion
+      if (configPath.startsWith('~')) {
+        configPath = configPath.replace(/^~/, process.env.HOME || process.env.USERPROFILE || '');
+      }
+
+      // Check if path is absolute (Windows or Unix)
+      const isAbsolute = path.isAbsolute(configPath);
+      if (!isAbsolute) {
+        // If relative, resolve from vault path
+        configPath = path.resolve(this.vaultPath, configPath);
+      }
+
+      console.log('[ObsidianAgent] Loading custom tools from:', configPath);
+
+      const configContent = await fs.readFile(configPath, 'utf-8');
+      const config = JSON.parse(configContent);
+
+      if (!config.tools || !Array.isArray(config.tools)) {
+        console.warn('[ObsidianAgent] Config must have a "tools" array');
+        return [];
+      }
+
+      console.log('[ObsidianAgent] Loaded custom tools:', config.tools.map((t: any) => t.name));
+      return config.tools;
+    } catch (error: any) {
+      console.error('[ObsidianAgent] Failed to load custom tools:', error.message);
+      new Notice(`Failed to load custom tools: ${error.message}`);
+      return [];
+    }
+  }
+
+  createToolWrapper(toolDef: any) {
+    // Build Zod schema from parameters
+    const schemaFields: Record<string, any> = {};
+    if (toolDef.parameters) {
+      for (const [paramName, paramDef] of Object.entries(toolDef.parameters as any)) {
+        let zodType = z.string(); // Default to string
+
+        if (paramDef.type === 'number' || paramDef.type === 'integer') {
+          zodType = z.number();
+        } else if (paramDef.type === 'boolean') {
+          zodType = z.boolean();
+        }
+
+        if (paramDef.optional) {
+          zodType = zodType.optional();
+        }
+
+        if (paramDef.description) {
+          zodType = zodType.describe(paramDef.description);
+        }
+
+        schemaFields[paramName] = zodType;
+      }
+    }
+
+    return tool(
+      toolDef.name,
+      toolDef.description,
+      z.object(schemaFields).shape,
+      async (params: any) => {
+        try {
+          console.log(`[ObsidianAgent] Executing custom tool: ${toolDef.name}`, params);
+
+          // Build command args with parameters
+          const args = [...(toolDef.args || [])];
+
+          // Add parameters as command-line flags
+          // Use separate arguments instead of --key=value to handle spaces
+          for (const [key, value] of Object.entries(params)) {
+            if (value !== undefined && value !== null) {
+              args.push(`--${key}`);
+              args.push(String(value));
+            }
+          }
+
+          // Build environment variables
+          const env = { ...process.env, ...(toolDef.env || {}) };
+
+          console.log(`[ObsidianAgent] Executing with env:`, Object.keys(toolDef.env || {}).join(', '));
+
+          // Special handling for WSL: env vars don't pass through automatically
+          let finalCommand = toolDef.command;
+          let finalArgs = [...args];
+
+          if (toolDef.command.toLowerCase() === 'wsl' && toolDef.env && Object.keys(toolDef.env).length > 0) {
+            // For WSL, inject env var assignments as separate arguments
+            // Format: wsl PRIMO_API_KEY=value PRIMO_VID=value python3 script.py args...
+            const envArgs = Object.entries(toolDef.env)
+              .map(([key, value]) => `${key}=${value}`);
+            finalArgs = [...envArgs, ...args];
+            console.log(`[ObsidianAgent] WSL command with env:`, finalCommand, finalArgs.join(' '));
+          } else {
+            console.log(`[ObsidianAgent] Full command:`, finalCommand, finalArgs.join(' '));
+          }
+
+          // Execute command using Node.js child_process
+          const { spawn } = require('child_process');
+
+          return new Promise((resolve) => {
+            const proc = spawn(finalCommand, finalArgs, { env });
+            let stdout = '';
+            let stderr = '';
+
+            proc.stdout.on('data', (data: Buffer) => {
+              stdout += data.toString();
+            });
+
+            proc.stderr.on('data', (data: Buffer) => {
+              stderr += data.toString();
+            });
+
+            proc.on('close', (code: number) => {
+              if (code !== 0) {
+                console.error(`[ObsidianAgent] Tool ${toolDef.name} failed:`, stderr);
+                resolve({
+                  content: [{
+                    type: 'text' as const,
+                    text: `Error executing ${toolDef.name}: ${stderr || 'Command failed'}`,
+                  }],
+                });
+                return;
+              }
+
+              // Try to parse JSON output
+              try {
+                const result = JSON.parse(stdout);
+                const resultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                resolve({
+                  content: [{
+                    type: 'text' as const,
+                    text: resultText,
+                  }],
+                });
+              } catch (parseError) {
+                // If not JSON, return raw output
+                resolve({
+                  content: [{
+                    type: 'text' as const,
+                    text: stdout,
+                  }],
+                });
+              }
+            });
+          });
+        } catch (error: any) {
+          console.error(`[ObsidianAgent] Error in custom tool ${toolDef.name}:`, error);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Error: ${error.message}`,
+            }],
+          };
+        }
+      }
+    );
+  }
+
+  async createTools() {
     const vaultPath = this.vaultPath;
 
-    return [
+    const builtInTools = [
       tool(
         'search_vault',
         'Search for text across all markdown files in the vault',
@@ -343,6 +515,12 @@ export default class ObsidianAgentPlugin extends Plugin {
         }
       ),
     ];
+
+    // Load and add custom tools
+    const customToolDefs = await this.loadCustomTools();
+    const customTools = customToolDefs.map(def => this.createToolWrapper(def));
+
+    return [...builtInTools, ...customTools];
   }
 
   async activateView() {
@@ -365,8 +543,11 @@ export default class ObsidianAgentPlugin extends Plugin {
     }
   }
 
-  async sendQuery(userQuery: string, sessionId?: string, abortSignal?: AbortSignal): Promise<AsyncIterable<any>> {
+  async sendQuery(userQuery: string, sessionId?: string, abortSignal?: AbortSignal, attachment?: { name: string; data: string; type: string }): Promise<AsyncIterable<any>> {
     console.log('[ObsidianAgent] Starting query:', userQuery);
+    if (attachment) {
+      console.log('[ObsidianAgent] With attachment:', attachment.name, attachment.type);
+    }
     console.log('[ObsidianAgent] Current working directory:', process.cwd());
     console.log('[ObsidianAgent] Environment check:', {
       HOME: process.env.HOME,
@@ -390,14 +571,15 @@ export default class ObsidianAgentPlugin extends Plugin {
       }
     }
 
-    // Create MCP server with tools
+    // Create MCP server with all tools (built-in + custom)
     console.log('[ObsidianAgent] Creating MCP server with tools...');
+    const allTools = await this.createTools();
     const server = createSdkMcpServer({
       name: 'obsidian',
       version: '1.0.0',
-      tools: this.createTools(),
+      tools: allTools,
     });
-    console.log('[ObsidianAgent] MCP server created');
+    console.log('[ObsidianAgent] MCP server created with', allTools.length, 'tools');
 
     console.log('[ObsidianAgent] Calling Agent SDK query...');
 
@@ -427,8 +609,57 @@ export default class ObsidianAgentPlugin extends Plugin {
       queryOptions.abortController = controller;
     }
 
+    // Construct prompt with file attachment if present
+    let prompt: any = userQuery;
+
+    if (attachment) {
+      // Build content blocks for message with attachment
+      const contentBlocks: any[] = [
+        {
+          type: 'text',
+          text: userQuery,
+        }
+      ];
+
+      if (attachment.type.startsWith('image/')) {
+        // Add image block
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: attachment.type,
+            data: attachment.data.split(',')[1], // Remove data:image/...;base64, prefix
+          }
+        });
+      } else if (attachment.type === 'application/pdf') {
+        // Add document block for PDF
+        contentBlocks.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: attachment.data.split(',')[1],
+          }
+        });
+      } else {
+        // Text file - add as text block
+        contentBlocks.push({
+          type: 'text',
+          text: `\n\nFile: ${attachment.name}\n\`\`\`\n${attachment.data}\n\`\`\``,
+        });
+      }
+
+      // Create async iterator for the message
+      prompt = (async function*() {
+        yield {
+          role: 'user',
+          content: contentBlocks,
+        };
+      })();
+    }
+
     return query({
-      prompt: userQuery,
+      prompt,
       options: queryOptions,
     });
   }
@@ -480,6 +711,20 @@ class AgentChatView extends ItemView {
 
     const buttonContainer = inputContainer.createDiv('agent-button-container');
 
+    // File upload button and hidden input
+    const fileInput = inputContainer.createEl('input', {
+      type: 'file',
+      cls: 'agent-file-input'
+    });
+    fileInput.style.display = 'none';
+    fileInput.accept = 'image/*,.pdf,.txt,.md,.doc,.docx';
+
+    const uploadButton = buttonContainer.createEl('button', {
+      text: '📎',
+      cls: 'agent-upload-button',
+      attr: { title: 'Attach file' }
+    });
+
     const sendButton = buttonContainer.createEl('button', {
       text: 'Send',
       cls: 'agent-send-button'
@@ -496,19 +741,92 @@ class AgentChatView extends ItemView {
       cls: 'agent-clear-button'
     });
 
+    // Store attached file
+    let attachedFile: { name: string; data: string; type: string } | null = null;
+
+    // File indicator element
+    const fileIndicator = inputContainer.createDiv('agent-file-indicator');
+    fileIndicator.style.display = 'none';
+
+    uploadButton.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      try {
+        // Read file based on type
+        if (file.type.startsWith('image/')) {
+          // Convert image to base64
+          const reader = new FileReader();
+          reader.onload = () => {
+            attachedFile = {
+              name: file.name,
+              data: reader.result as string,
+              type: file.type
+            };
+            fileIndicator.setText(`📎 ${file.name}`);
+            fileIndicator.style.display = 'block';
+          };
+          reader.readAsDataURL(file);
+        } else if (file.type === 'application/pdf') {
+          // For PDF, we'll send the file path or base64
+          const reader = new FileReader();
+          reader.onload = () => {
+            attachedFile = {
+              name: file.name,
+              data: reader.result as string,
+              type: file.type
+            };
+            fileIndicator.setText(`📎 ${file.name}`);
+            fileIndicator.style.display = 'block';
+          };
+          reader.readAsDataURL(file);
+        } else {
+          // Text-based files
+          const reader = new FileReader();
+          reader.onload = () => {
+            attachedFile = {
+              name: file.name,
+              data: reader.result as string,
+              type: 'text'
+            };
+            fileIndicator.setText(`📎 ${file.name}`);
+            fileIndicator.style.display = 'block';
+          };
+          reader.readAsText(file);
+        }
+      } catch (error: any) {
+        console.error('[ObsidianAgent] Error reading file:', error);
+        new Notice(`Error reading file: ${error.message}`);
+      }
+    });
+
     const handleSend = async () => {
       const queryText = textarea.value.trim();
       if (!queryText || this.isLoading) return;
 
       textarea.value = '';
       this.isLoading = true;
+
+      // Capture attached file and clear it
+      const fileToSend = attachedFile;
+      attachedFile = null;
+      fileIndicator.style.display = 'none';
+      fileInput.value = '';
       this.abortController = new AbortController();
 
       sendButton.style.display = 'none';
       stopButton.style.display = '';
 
-      // Add user message
-      this.addMessage(messagesContainer, 'user', queryText);
+      // Add user message with file indicator if present
+      let displayText = queryText;
+      if (fileToSend) {
+        displayText += `\n\n📎 ${fileToSend.name}`;
+      }
+      this.addMessage(messagesContainer, 'user', displayText);
 
       // Add loading indicator
       const loadingEl = messagesContainer.createDiv('agent-message assistant loading');
@@ -516,7 +834,7 @@ class AgentChatView extends ItemView {
 
       try {
         console.log('[ObsidianAgent] Getting query stream...');
-        const stream = await this.plugin.sendQuery(queryText, this.sessionId || undefined, this.abortController.signal);
+        const stream = await this.plugin.sendQuery(queryText, this.sessionId || undefined, this.abortController.signal, fileToSend);
         console.log('[ObsidianAgent] Query stream obtained, processing events...');
         let fullResponse = '';
 
@@ -558,6 +876,9 @@ class AgentChatView extends ItemView {
                 '/',  // Use vault root as source path for link resolution
                 this
               );
+
+              // Fix overflow on all rendered containers (Obsidian applies its own styles)
+              this.fixOverflowOnElement(assistantEl);
 
               // Make internal links clickable
               assistantEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
@@ -646,12 +967,28 @@ class AgentChatView extends ItemView {
     this.addStyles();
   }
 
+  fixOverflowOnElement(element: HTMLElement) {
+    // Remove overflow constraints from the element and all its children
+    element.style.overflow = 'visible';
+    element.style.maxHeight = 'none';
+
+    // Fix all child divs that might have overflow constraints
+    const allDivs = element.querySelectorAll('div');
+    allDivs.forEach((div: HTMLElement) => {
+      div.style.overflow = 'visible';
+      div.style.maxHeight = 'none';
+    });
+  }
+
   async addMessage(container: HTMLElement, role: 'user' | 'assistant', content: string) {
     const messageEl = container.createDiv(`agent-message ${role}`);
 
     if (role === 'assistant') {
       // Render markdown for assistant messages
       await MarkdownRenderer.renderMarkdown(content, messageEl, '/', this);
+
+      // Fix overflow after rendering
+      this.fixOverflowOnElement(messageEl);
 
       // Make internal links clickable
       messageEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
@@ -719,8 +1056,11 @@ class AgentChatView extends ItemView {
         padding: 12px 16px;
         border-radius: 12px;
         max-width: 80%;
+        overflow-wrap: break-word;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         animation: slideIn 0.2s ease-out;
+        overflow: visible !important;
+        max-height: none !important;
       }
 
       @keyframes slideIn {
@@ -738,6 +1078,10 @@ class AgentChatView extends ItemView {
         background: var(--interactive-accent);
         color: var(--text-on-accent);
         align-self: flex-end;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        word-break: break-word;
+        overflow-x: auto;
         border-bottom-right-radius: 4px;
       }
 
@@ -745,6 +1089,9 @@ class AgentChatView extends ItemView {
         background: var(--background-secondary);
         align-self: flex-start;
         word-wrap: break-word;
+        overflow-wrap: break-word;
+        word-break: break-word;
+        overflow-x: auto;
         border-bottom-left-radius: 4px;
         border: 1px solid var(--background-modifier-border);
       }
@@ -839,11 +1186,17 @@ class AgentChatView extends ItemView {
       .agent-message.assistant code {
         margin: 0;
         padding: 0.1em 0.3em;
+        word-break: break-all;
+        white-space: pre-wrap;
       }
 
       .agent-message.assistant pre {
         margin: 0;
         margin-bottom: 0.15em;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-width: 100%;
       }
 
       .agent-message.assistant pre:last-child {
@@ -855,6 +1208,23 @@ class AgentChatView extends ItemView {
       .agent-message.assistant .markdown-preview-view {
         margin: 0;
         padding: 0;
+        max-height: none !important;
+        overflow: visible !important;
+        height: auto !important;
+      }
+
+      /* Ensure markdown containers don't create scrollable areas */
+      .agent-message.assistant .markdown-preview-sizer {
+        max-height: none !important;
+        overflow: visible !important;
+      }
+
+      /* Catch-all for any container divs that might be created */
+      .agent-message.assistant > div,
+      .agent-message.assistant div[class*="markdown"],
+      .agent-message.assistant div[class*="preview"] {
+        max-height: none !important;
+        overflow: visible !important;
       }
 
       @keyframes pulse {
@@ -920,9 +1290,19 @@ class AgentChatView extends ItemView {
         gap: 6px;
       }
 
+      .agent-file-indicator {
+        font-size: 0.9em;
+        color: var(--text-muted);
+        padding: 4px 8px;
+        background: var(--background-secondary);
+        border-radius: 4px;
+        margin-bottom: 4px;
+      }
+
       .agent-send-button,
       .agent-stop-button,
-      .agent-clear-button {
+      .agent-clear-button,
+      .agent-upload-button {
         padding: 10px 20px;
         border-radius: 8px;
         border: none;
@@ -967,6 +1347,17 @@ class AgentChatView extends ItemView {
 
       .agent-clear-button:hover {
         background: var(--background-modifier-border-hover);
+        transform: translateY(-1px);
+      }
+
+      .agent-upload-button {
+        background: var(--background-secondary);
+        color: var(--text-normal);
+        font-size: 16px;
+      }
+
+      .agent-upload-button:hover {
+        background: var(--background-secondary-alt);
         transform: translateY(-1px);
       }
     `;

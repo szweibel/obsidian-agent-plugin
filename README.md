@@ -87,6 +87,70 @@ The workflow preferences control how the agent organizes your vault. You can cus
 
 **Note:** The default workflow uses Scratchpad.md as an inbox, but you can easily customize it. Core rules and tool descriptions are protected - only workflow preferences are customizable.
 
+### Custom Tools (Advanced)
+
+Extend the agent with your own tools by wrapping external scripts/commands. This allows you to add domain-specific functionality like library catalog search, database queries, or custom APIs.
+
+**Create a tools config file** (e.g., `~/my-tools.json`):
+
+```json
+{
+  "tools": [
+    {
+      "name": "search_library",
+      "description": "Search the library catalog for books and articles",
+      "parameters": {
+        "title": {"type": "string", "optional": true, "description": "Search by title"},
+        "author": {"type": "string", "optional": true, "description": "Search by author"}
+      },
+      "command": "python3",
+      "args": ["/path/to/library_search.py"],
+      "env": {
+        "API_KEY": "your-key-here"
+      }
+    }
+  ]
+}
+```
+
+**OS-Specific Command Examples:**
+
+**Windows with WSL:**
+```json
+{
+  "command": "wsl",
+  "args": ["python3", "/home/user/scripts/tool.py"]
+}
+```
+
+**Windows (native Python):**
+```json
+{
+  "command": "python",
+  "args": ["C:\\Users\\YourName\\scripts\\tool.py"]
+}
+```
+
+**macOS/Linux:**
+```json
+{
+  "command": "python3",
+  "args": ["/home/user/scripts/tool.py"]
+}
+```
+
+**Configuration:**
+1. Set **Custom Tools Config Path** in plugin settings to your config file path
+2. Reload the plugin
+3. Your custom tools will appear alongside built-in Obsidian tools
+
+**Requirements for scripts:**
+- Accept parameters as CLI arguments (e.g., `--title="..." --author="..."`)
+- Output JSON to stdout
+- Exit with code 0 on success
+
+The plugin handles path resolution (supports `~`, absolute paths like `C:\` or `/`, and relative to vault), and works cross-platform (Windows, macOS, Linux).
+
 ## Usage
 
 ### Opening the Agent Chat
