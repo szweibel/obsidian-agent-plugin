@@ -545,7 +545,7 @@ class AgentChatView extends ItemView {
                   }
                   lastWasToolUse = false;
                 } else if (block.type === 'tool_use') {
-                  fullResponse += `\n*🔧 ${block.name}*  `;
+                  fullResponse += `\n\n*🔧 ${block.name}*\n`;
                   lastWasToolUse = true;
                 }
               }
@@ -767,7 +767,7 @@ class AgentChatView extends ItemView {
       /* Reduce spacing in markdown-rendered content */
       .agent-message.assistant p {
         margin: 0;
-        margin-bottom: 0.05em;
+        margin-bottom: 0.08em;
         line-height: 1.4;
       }
 
@@ -784,7 +784,13 @@ class AgentChatView extends ItemView {
         display: none;
       }
 
-      /* Tool indicators - keep inline and compact */
+      /* Tool indicators - small paragraph with moderate spacing */
+      .agent-message.assistant p:has(em:first-child) {
+        margin-bottom: 0.25em;
+        font-size: 0.95em;
+        opacity: 0.85;
+      }
+
       .agent-message.assistant p em {
         display: inline;
         margin: 0;
