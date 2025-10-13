@@ -494,7 +494,7 @@ class AgentChatView extends ItemView {
 
       // Add loading indicator
       const loadingEl = messagesContainer.createDiv('agent-message assistant loading');
-      loadingEl.setText('Thinking...');
+      loadingEl.setText('Thinking');
 
       try {
         console.log('[ObsidianAgent] Getting query stream...');
@@ -502,8 +502,8 @@ class AgentChatView extends ItemView {
         console.log('[ObsidianAgent] Query stream obtained, processing events...');
         let fullResponse = '';
 
-        loadingEl.remove();
         const assistantEl = messagesContainer.createDiv('agent-message assistant');
+        let hasContent = false;
 
         for await (const event of stream) {
           console.log('[ObsidianAgent] Stream event:', event.type, event);
@@ -518,40 +518,57 @@ class AgentChatView extends ItemView {
             // Extract text from message content
             const message = event.message;
             if (message.content && Array.isArray(message.content)) {
+              let hasNewContent = false;
               for (const block of message.content) {
                 if (block.type === 'text') {
                   fullResponse += block.text;
+                  hasNewContent = true;
                 } else if (block.type === 'tool_use') {
                   fullResponse += `\n\n*🔧 ${block.name}*\n`;
+                  hasNewContent = true;
                 }
               }
-              // Render markdown
-              assistantEl.empty();
-              await MarkdownRenderer.renderMarkdown(
-                fullResponse,
-                assistantEl,
-                '/',  // Use vault root as source path for link resolution
-                this
-              );
 
-              // Make internal links clickable
-              assistantEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
-                link.addEventListener('click', (e) => {
-                  e.preventDefault();
-                  const href = link.getAttribute('data-href');
-                  if (href) {
-                    // Open the linked file
-                    const file = this.plugin.app.metadataCache.getFirstLinkpathDest(href, '/');
-                    if (file) {
-                      this.plugin.app.workspace.getLeaf(false).openFile(file);
+              // Only remove loading indicator and render when we have actual content
+              if (hasNewContent) {
+                if (!hasContent) {
+                  loadingEl.remove();
+                  hasContent = true;
+                }
+
+                // Render markdown
+                assistantEl.empty();
+                await MarkdownRenderer.renderMarkdown(
+                  fullResponse,
+                  assistantEl,
+                  '/',  // Use vault root as source path for link resolution
+                  this
+                );
+
+                // Make internal links clickable
+                assistantEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
+                  link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const href = link.getAttribute('data-href');
+                    if (href) {
+                      // Open the linked file
+                      const file = this.plugin.app.metadataCache.getFirstLinkpathDest(href, '/');
+                      if (file) {
+                        this.plugin.app.workspace.getLeaf(false).openFile(file);
+                      }
                     }
-                  }
+                  });
                 });
-              });
 
-              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+              }
             }
           }
+        }
+
+        // Clean up loading indicator if it's still there
+        if (!hasContent) {
+          loadingEl.remove();
         }
 
         console.log('[ObsidianAgent] Query completed successfully');
@@ -741,9 +758,26 @@ class AgentChatView extends ItemView {
         margin-bottom: 0;
       }
 
+      @keyframes pulse {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+      }
+
       .agent-message.loading {
-        opacity: 0.7;
         font-style: italic;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+
+      .agent-message.loading::after {
+        content: '...';
+        animation: ellipsis 1.5s steps(4, end) infinite;
+      }
+
+      @keyframes ellipsis {
+        0% { content: ''; }
+        25% { content: '.'; }
+        50% { content: '..'; }
+        75% { content: '...'; }
       }
 
       .tool-call {
