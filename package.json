@@ -1,0 +1,28 @@
+{
+  "name": "obsidian-agent-plugin",
+  "version": "0.1.0",
+  "description": "AI agent powered by Claude for organizing your Obsidian vault",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "ai",
+    "claude"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "esbuild": "^0.25.10",
+    "esbuild-plugin-transform-hook": "^0.2.0",
+    "obsidian": "^1.10.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.14"
+  }
+}
