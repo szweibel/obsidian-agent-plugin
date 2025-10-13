@@ -365,7 +365,7 @@ export default class ObsidianAgentPlugin extends Plugin {
     }
   }
 
-  async sendQuery(userQuery: string, sessionId?: string): Promise<AsyncIterable<any>> {
+  async sendQuery(userQuery: string, sessionId?: string, abortSignal?: AbortSignal): Promise<AsyncIterable<any>> {
     console.log('[ObsidianAgent] Starting query:', userQuery);
     console.log('[ObsidianAgent] Current working directory:', process.cwd());
     console.log('[ObsidianAgent] Environment check:', {
@@ -420,6 +420,13 @@ export default class ObsidianAgentPlugin extends Plugin {
       queryOptions.resume = sessionId;
     }
 
+    // If we have an abort signal, create AbortController for it
+    if (abortSignal) {
+      const controller = new AbortController();
+      abortSignal.addEventListener('abort', () => controller.abort());
+      queryOptions.abortController = controller;
+    }
+
     return query({
       prompt: userQuery,
       options: queryOptions,
@@ -436,6 +443,7 @@ class AgentChatView extends ItemView {
   private messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   private isLoading = false;
   private sessionId: string | null = null;
+  private abortController: AbortController | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianAgentPlugin) {
     super(leaf);
@@ -470,12 +478,20 @@ class AgentChatView extends ItemView {
       cls: 'agent-input'
     });
 
-    const sendButton = inputContainer.createEl('button', {
+    const buttonContainer = inputContainer.createDiv('agent-button-container');
+
+    const sendButton = buttonContainer.createEl('button', {
       text: 'Send',
       cls: 'agent-send-button'
     });
 
-    const clearButton = inputContainer.createEl('button', {
+    const stopButton = buttonContainer.createEl('button', {
+      text: 'Stop',
+      cls: 'agent-stop-button'
+    });
+    stopButton.style.display = 'none';
+
+    const clearButton = buttonContainer.createEl('button', {
       text: 'Clear',
       cls: 'agent-clear-button'
     });
@@ -486,7 +502,10 @@ class AgentChatView extends ItemView {
 
       textarea.value = '';
       this.isLoading = true;
-      sendButton.disabled = true;
+      this.abortController = new AbortController();
+
+      sendButton.style.display = 'none';
+      stopButton.style.display = '';
 
       // Add user message
       this.addMessage(messagesContainer, 'user', queryText);
@@ -497,7 +516,7 @@ class AgentChatView extends ItemView {
 
       try {
         console.log('[ObsidianAgent] Getting query stream...');
-        const stream = await this.plugin.sendQuery(queryText, this.sessionId || undefined);
+        const stream = await this.plugin.sendQuery(queryText, this.sessionId || undefined, this.abortController.signal);
         console.log('[ObsidianAgent] Query stream obtained, processing events...');
         let fullResponse = '';
 
@@ -577,15 +596,30 @@ class AgentChatView extends ItemView {
         console.error('[ObsidianAgent] Query error:', error);
         console.error('[ObsidianAgent] Error stack:', error.stack);
         loadingEl.remove();
-        const errorMessage = `Error: ${error.message}\n\nCheck browser console (F12) for details.`;
-        new Notice(errorMessage);
-        this.addMessage(messagesContainer, 'assistant', errorMessage);
+
+        // Check if it was aborted
+        if (error.name === 'AbortError' || this.abortController?.signal.aborted) {
+          this.addMessage(messagesContainer, 'assistant', '*Stopped by user*');
+        } else {
+          const errorMessage = `Error: ${error.message}\n\nCheck browser console (F12) for details.`;
+          new Notice(errorMessage);
+          this.addMessage(messagesContainer, 'assistant', errorMessage);
+        }
       } finally {
         this.isLoading = false;
-        sendButton.disabled = false;
+        this.abortController = null;
+        sendButton.style.display = '';
+        stopButton.style.display = 'none';
         textarea.focus();
       }
     };
+
+    stopButton.addEventListener('click', () => {
+      if (this.abortController) {
+        console.log('[ObsidianAgent] Aborting query...');
+        this.abortController.abort();
+      }
+    });
 
     clearButton.addEventListener('click', () => {
       // Clear the UI
@@ -645,34 +679,69 @@ class AgentChatView extends ItemView {
         display: flex;
         flex-direction: column;
         height: 100%;
-        padding: 10px;
+        padding: 16px;
+        background: var(--background-primary);
       }
 
       .agent-messages {
         flex: 1;
         overflow-y: auto;
-        margin-bottom: 10px;
+        margin-bottom: 16px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 12px;
+        padding: 4px;
+      }
+
+      .agent-messages::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .agent-messages::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .agent-messages::-webkit-scrollbar-thumb {
+        background: var(--background-modifier-border);
+        border-radius: 4px;
+      }
+
+      .agent-messages::-webkit-scrollbar-thumb:hover {
+        background: var(--background-modifier-border-hover);
       }
 
       .agent-message {
-        padding: 10px;
-        border-radius: 6px;
-        max-width: 85%;
+        padding: 12px 16px;
+        border-radius: 12px;
+        max-width: 80%;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        animation: slideIn 0.2s ease-out;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
 
       .agent-message.user {
         background: var(--interactive-accent);
         color: var(--text-on-accent);
         align-self: flex-end;
+        border-bottom-right-radius: 4px;
       }
 
       .agent-message.assistant {
         background: var(--background-secondary);
         align-self: flex-start;
         word-wrap: break-word;
+        border-bottom-left-radius: 4px;
+        border: 1px solid var(--background-modifier-border);
       }
 
       .agent-message.assistant * {
@@ -789,48 +858,86 @@ class AgentChatView extends ItemView {
       .agent-input-container {
         display: flex;
         gap: 8px;
+        padding: 12px;
+        background: var(--background-secondary);
+        border-radius: 12px;
+        border: 1px solid var(--background-modifier-border);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
       }
 
       .agent-input {
         flex: 1;
         min-height: 60px;
-        padding: 8px;
-        border-radius: 4px;
+        max-height: 200px;
+        padding: 10px 12px;
+        border-radius: 8px;
         background: var(--background-primary);
         border: 1px solid var(--background-modifier-border);
         resize: vertical;
+        font-family: var(--font-text);
+        font-size: var(--font-ui-medium);
+        transition: border-color 0.2s;
+      }
+
+      .agent-input:focus {
+        outline: none;
+        border-color: var(--interactive-accent);
+      }
+
+      .agent-button-container {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .agent-send-button,
+      .agent-stop-button,
+      .agent-clear-button {
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        font-weight: 500;
+        font-size: var(--font-ui-small);
+        transition: all 0.2s;
+        white-space: nowrap;
       }
 
       .agent-send-button {
-        padding: 8px 16px;
-        border-radius: 4px;
         background: var(--interactive-accent);
         color: var(--text-on-accent);
-        border: none;
-        cursor: pointer;
       }
 
       .agent-send-button:hover {
         background: var(--interactive-accent-hover);
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
       }
 
-      .agent-send-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
+      .agent-send-button:active {
+        transform: translateY(0);
+      }
+
+      .agent-stop-button {
+        background: var(--color-red);
+        color: white;
+      }
+
+      .agent-stop-button:hover {
+        background: var(--color-red);
+        opacity: 0.9;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(255, 0, 0, 0.2);
       }
 
       .agent-clear-button {
-        padding: 8px 16px;
-        border-radius: 4px;
-        background: var(--background-modifier-error);
-        color: var(--text-on-accent);
-        border: none;
-        cursor: pointer;
+        background: var(--background-modifier-border);
+        color: var(--text-normal);
       }
 
       .agent-clear-button:hover {
-        background: var(--background-modifier-error-hover);
-        opacity: 0.8;
+        background: var(--background-modifier-border-hover);
+        transform: translateY(-1px);
       }
     `;
     document.head.appendChild(style);
