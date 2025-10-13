@@ -574,11 +574,15 @@ class AgentChatView extends ItemView {
                 });
               });
 
-              messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
               // Show thinking indicator after tool use (agent is processing results)
               if (lastWasToolUse && loadingEl.isConnected) {
                 loadingEl.style.display = '';
+                // Wait for layout to update before scrolling
+                requestAnimationFrame(() => {
+                  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                });
+              } else {
+                // Scroll to bottom after rendering
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
               }
             }
@@ -691,6 +695,7 @@ class AgentChatView extends ItemView {
         flex-direction: column;
         gap: 12px;
         padding: 4px;
+        padding-bottom: 8px;
       }
 
       .agent-messages::-webkit-scrollbar {
