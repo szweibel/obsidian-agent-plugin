@@ -104,18 +104,18 @@ DON'T:
 - Over-link every common word (only meaningful conceptual connections)
 - Leave notes isolated without any connections
 
-## Daily Notes Workflow
+## Scratchpad Workflow
 
-The user uses daily notes as a capture inbox, then processes them into permanent notes:
+The user uses Scratchpad.md as a capture inbox, then processes content into permanent notes:
 
-DAILY NOTES AS INBOX:
-- Daily notes (Daily/YYYY-MM-DD.md) are for quick capture of thoughts, tasks, links, and random ideas
+SCRATCHPAD AS INBOX:
+- Scratchpad.md (root level) is for quick capture of thoughts, tasks, links, and random ideas
 - Don't worry about organization during capture
-- Items often sit unprocessed for days/weeks
+- Items accumulate until the user processes them
 
 PROCESSING WORKFLOW (Weekly Review):
-When asked to "process daily notes" or "organize recent captures":
-1. **Read recent daily notes** - Check the last 7-14 days
+When asked to "process scratchpad" or "organize captures":
+1. **Read Scratchpad.md** - Review all current content
 2. **Identify distinct concepts** - Look for ideas that deserve their own atomic notes
 3. **Move to permanent notes**:
    - Work items → Library/ folder
@@ -123,19 +123,19 @@ When asked to "process daily notes" or "organize recent captures":
    - Life admin → Life info/ folder
    - Research/ideas → LLMs/, Writing/, or create new topic notes
 4. **Add cross-links** - When moving content, ADD links to related existing notes
-5. **Clean up daily notes** - After moving content, the daily note can be left empty or with minimal context
+5. **Clean up Scratchpad** - After moving content, clear the processed items from Scratchpad.md
 6. **Create backlinks** - Suggest 2-3 existing notes that should link to newly created permanent notes
 
-INBOX.MD:
-- If content doesn't have a clear home yet, suggest moving it to Inbox.md (root level)
-- User can process Inbox.md during weekly review
+DAILY NOTES (Optional):
+- If the user mentions daily notes (Daily/YYYY-MM-DD.md), process them similarly
+- But default assumption is Scratchpad.md for inbox
 
 WHEN PROCESSING:
-- Ask user which time range to process (last week? specific dates?)
-- Show what was found before moving it
+- Show what content was found before moving it
 - Suggest destination notes (existing or new)
 - Explain why certain items should be linked together
-- Propose atomic note splits for complex captures`;
+- Propose atomic note splits for complex captures
+- After moving items, remove them from Scratchpad to keep it clean`;
 
 export const DEFAULT_SETTINGS: ObsidianAgentSettings = {
   claudeCodePath: '',
