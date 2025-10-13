@@ -7,8 +7,11 @@ An Obsidian plugin that integrates Claude's Agent SDK to help you organize, sear
 - 🤖 **Natural Language Control** - Ask the agent to organize notes, search content, or manage your vault
 - 🔗 **Smart Linking** - Automatically suggests and creates [[wiki links]] between related concepts
 - 🔍 **Powerful Search** - Full-text search and backlink discovery
-- 📝 **Daily Notes Processing** - Process daily note captures into organized permanent notes
-- ⚙️ **Customizable** - Edit the system prompt to match your workflow and vault structure
+- 🌐 **Web Integration** - Search the web, fetch content from URLs, and incorporate external information
+- 📝 **Flexible Inbox Processing** - Process captures from your inbox (daily notes, scratchpad, etc.) into organized permanent notes
+- 🛑 **Stop Button** - Interrupt the agent anytime with a dedicated stop button
+- ✨ **Modern UI** - Smooth animations, thinking indicator, and polished chat interface
+- ⚙️ **Fully Customizable** - Edit workflow preferences to match your PKM system and vault structure
 - 🛠️ **Obsidian-Specific Tools**:
   - `list_pages()` - List all markdown files organized by folder
   - `search_vault(query)` - Full-text search across your vault
@@ -56,7 +59,7 @@ claude --version
 ### BRAT Installation (for beta testing)
 
 1. Install the [BRAT plugin](https://github.com/TfTHacker/obsidian42-brat)
-2. Add this repository: `yourusername/obsidian-agent-plugin`
+2. Add this repository: `szweibel/obsidian-agent-plugin`
 3. BRAT will auto-update the plugin when new versions are released
 
 ## Configuration
@@ -66,18 +69,23 @@ claude --version
 1. Open **Settings → Obsidian Agent**
 2. Click **"Auto-Detect"** to find your Claude Code CLI path
    - If auto-detect fails, manually enter the path (e.g., `C:\Users\YourName\.local\bin\claude.exe` on Windows)
-3. (Optional) Customize the **System Prompt** to match your workflow
+3. (Optional) Customize the **Workflow Preferences** to match your vault
 
-### System Prompt Customization
+### Workflow Customization
 
-The system prompt controls how the agent behaves. You can customize:
+The workflow preferences control how the agent organizes your vault. You can customize:
 
 - **Folder Structure** - Update folder names to match your vault (e.g., change `Library/` to `Work/`)
-- **Daily Notes Path** - Change `Daily/` to your daily notes folder name
-- **Workflow** - Modify the processing workflow to match your PKM system
+- **Inbox System** - Configure for daily notes, scratchpad, inbox file, or your own system
+- **Processing Workflow** - Modify how the agent processes and organizes content
 - **Linking Philosophy** - Adjust how aggressively the agent creates links
 
-**Example:** If your daily notes are in `Journal/` instead of `Daily/`, edit the system prompt and replace all instances of `Daily/` with `Journal/`.
+**Examples:**
+- Daily notes workflow: Change `Scratchpad.md` to `Daily/YYYY-MM-DD.md` throughout the workflow
+- Custom inbox: Use `Inbox.md`, `Capture.md`, or whatever you prefer
+- Different folder names: Replace `Library/` with your own folder structure
+
+**Note:** The default workflow uses Scratchpad.md as an inbox, but you can easily customize it. Core rules and tool descriptions are protected - only workflow preferences are customizable.
 
 ## Usage
 
@@ -94,10 +102,16 @@ The system prompt controls how the agent behaves. You can customize:
 - "What pages link to the Teaching page?"
 - "Show me all notes in the Library folder"
 
+**Web Integration:**
+- "Search the web for recent developments in AI and summarize them"
+- "Fetch the content from this URL and create a note"
+- "Find information about Zettelkasten method and add it to my vault"
+
 **Organization:**
-- "Process my daily notes from the last week"
-- "Organize the LogSeq_Import.md file into separate notes"
-- "Move the content about books from my inbox to a new Books note"
+- "Process my scratchpad" or "Process my daily notes from the last week"
+- "Organize the captures into separate notes"
+- "Move the content about books to a new Books note"
+- "Create atomic notes from my inbox"
 
 **Linking:**
 - "Find related notes that should link to this Teaching Philosophy page"
@@ -111,8 +125,11 @@ The system prompt controls how the agent behaves. You can customize:
 
 - **Clickable Links** - Click [[wiki links]] in responses to open notes
 - **Tool Indicators** - See what tools the agent is using (shown as *🔧 tool_name*)
+- **Thinking Indicator** - Animated indicator shows when the agent is processing
+- **Stop Button** - Interrupt the agent mid-response if needed
 - **Clear Button** - Start a fresh conversation (clears history)
 - **Session Memory** - Agent remembers the entire conversation until you clear it
+- **Modern UI** - Smooth animations, polished styling, and professional appearance
 
 ## Troubleshooting
 
@@ -139,14 +156,14 @@ The system prompt controls how the agent behaves. You can customize:
 1. Check the browser console (Ctrl+Shift+I / Cmd+Option+I)
 2. Look for `[ObsidianAgent]` log messages
 3. Try clearing the chat and starting a new session
-4. Verify the system prompt in settings hasn't been corrupted
+4. Verify the workflow preferences in settings haven't been corrupted
 
 ### Agent suggestions don't match my vault structure
 
 **Solution:**
 1. Open Settings → Obsidian Agent
-2. Edit the System Prompt to match your folder names and workflow
-3. Update references like `Library/`, `Daily/`, etc. to match your vault
+2. Edit the Workflow Preferences to match your folder names and workflow
+3. Update references like `Library/`, `Scratchpad.md`, etc. to match your vault
 
 ## Privacy & Security
 
@@ -163,7 +180,7 @@ The system prompt controls how the agent behaves. You can customize:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/obsidian-agent-plugin.git
+git clone https://github.com/szweibel/obsidian-agent-plugin.git
 cd obsidian-agent-plugin
 
 # Install dependencies
