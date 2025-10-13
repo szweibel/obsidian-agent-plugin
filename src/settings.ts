@@ -35,34 +35,36 @@ CRITICAL RULES:
 
 Available Tools:
 
-Obsidian-Specific MCP Tools (ALWAYS use these for vault operations):
+Obsidian-Specific MCP Tools:
 - mcp__obsidian__list_pages() - List all markdown files, organized by folder
 - mcp__obsidian__search_vault(query) - Full-text search across all notes
 - mcp__obsidian__get_backlinks(page) - Find pages that link TO a specific page
 - mcp__obsidian__get_outgoing_links(page) - Find links that a page links TO
 - mcp__obsidian__get_daily_note(date?) - Get path to daily note (today or specific date)
-- mcp__obsidian__read_file(path) - Read a vault file (use relative path like "Daily/2025-10-13.md")
-- mcp__obsidian__write_file(path, content) - Write/create a vault file
-- mcp__obsidian__edit_file(path, old_text, new_text) - Make precise edits to a vault file
 
-Claude Code Built-in Tools (use for non-vault files only):
-- Read(file_path) - Read files OUTSIDE the vault (use full absolute paths)
-- Edit(file_path, old_string, new_string) - Edit files OUTSIDE the vault
-- Write(file_path, content) - Write files OUTSIDE the vault
-- Bash(command) - Run shell commands
+Claude Code Built-in Tools:
+- Read(file_path) - Read any file (use this for reading vault files!)
+- Edit(file_path, old_string, new_string) - Make precise edits (BEST for JSON!)
+- Write(file_path, content) - Write files
+- Bash(command) - Run shell commands (NOT for reading files - use Read instead!)
 - Glob(pattern) - Find files by pattern
 - Grep(pattern) - Search file contents
 
 The vault is located at: VAULT_PATH
+**Your working directory is already set to the vault root.**
 
-Tool Usage Guidelines:
-- **CRITICAL**: For ALL vault file operations, use the mcp__obsidian__* tools with RELATIVE paths
-- For vault files: Use mcp__obsidian__read_file("Daily/2025-10-13.md"), NOT Read("VAULT_PATH/Daily/2025-10-13.md")
-- For Obsidian config files: Use mcp__obsidian__edit_file(".obsidian/app.json", old, new) for precision
+Tool Usage Guidelines - CRITICAL PATH RULES:
+- **ALWAYS use RELATIVE paths** for vault files (e.g., "Daily/2025-10-13.md", "Scratchpad.md", ".obsidian/app.json")
+- **NEVER use absolute paths** (they cause "file unexpectedly modified" errors)
+- **DO NOT use Bash cat/head/tail** to read files - use the Read tool instead
+- The working directory is the vault root, so relative paths resolve correctly
+- Examples:
+  - Read("Daily/2025-10-13.md") ✅ | Bash("cat Daily/2025-10-13.md") ❌
+  - Read(".obsidian/app.json") ✅ | Read("/full/path/.obsidian/app.json") ❌
+  - Edit(".obsidian/app.json", old, new) ✅ | Edit("VAULT_PATH/.obsidian/app.json", old, new) ❌
 - For finding content: Use mcp__obsidian__search_vault for text, Grep for regex patterns
 - For understanding connections: Use mcp__obsidian__get_backlinks and mcp__obsidian__get_outgoing_links
-- For daily notes: Use mcp__obsidian__get_daily_note to get the path, then mcp__obsidian__read_file/write_file to work with it
-- Only use Claude Code's Read/Write/Edit for files OUTSIDE the vault`;
+- For daily notes: Use mcp__obsidian__get_daily_note to get the path, then Read/Write/Edit with that relative path`;
 
 // This is the editable workflow section
 export const DEFAULT_WORKFLOW = `## Your Linking Philosophy
