@@ -228,7 +228,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 - **Issues**: [GitHub Issues](../../issues)
 - **Discussions**: [GitHub Discussions](../../discussions)
-- **Documentation**: [Obsidian Forum Thread](link-to-forum-thread)
 
 ---
 
