@@ -545,7 +545,7 @@ class AgentChatView extends ItemView {
                   }
                   lastWasToolUse = false;
                 } else if (block.type === 'tool_use') {
-                  fullResponse += `\n\n*🔧 ${block.name}*\n`;
+                  fullResponse += `\n*🔧 ${block.name}*  `;
                   lastWasToolUse = true;
                 }
               }
@@ -767,7 +767,7 @@ class AgentChatView extends ItemView {
       /* Reduce spacing in markdown-rendered content */
       .agent-message.assistant p {
         margin: 0;
-        margin-bottom: 0.15em;
+        margin-bottom: 0.05em;
         line-height: 1.4;
       }
 
@@ -779,10 +779,22 @@ class AgentChatView extends ItemView {
         margin-bottom: 0;
       }
 
+      /* Collapse empty paragraphs */
+      .agent-message.assistant p:empty {
+        display: none;
+      }
+
+      /* Tool indicators - keep inline and compact */
+      .agent-message.assistant p em {
+        display: inline;
+        margin: 0;
+        padding: 0;
+      }
+
       .agent-message.assistant ul,
       .agent-message.assistant ol {
         margin: 0;
-        margin-bottom: 0.2em;
+        margin-bottom: 0.1em;
         padding-left: 1.5em;
         line-height: 1.3;
       }
@@ -807,8 +819,8 @@ class AgentChatView extends ItemView {
       .agent-message.assistant h3,
       .agent-message.assistant h4 {
         margin: 0;
-        margin-top: 0.5em;
-        margin-bottom: 0.2em;
+        margin-top: 0.3em;
+        margin-bottom: 0.1em;
       }
 
       .agent-message.assistant h1:first-child,
@@ -825,11 +837,18 @@ class AgentChatView extends ItemView {
 
       .agent-message.assistant pre {
         margin: 0;
-        margin-bottom: 0.3em;
+        margin-bottom: 0.15em;
       }
 
       .agent-message.assistant pre:last-child {
         margin-bottom: 0;
+      }
+
+      /* Obsidian markdown wrapper divs - remove extra spacing */
+      .agent-message.assistant .markdown-preview-section,
+      .agent-message.assistant .markdown-preview-view {
+        margin: 0;
+        padding: 0;
       }
 
       @keyframes pulse {
