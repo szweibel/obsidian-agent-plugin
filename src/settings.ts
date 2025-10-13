@@ -46,6 +46,7 @@ Claude Code Built-in Tools:
 - Read(file_path) - Read any file
 - Edit(file_path, old_string, new_string) - Make precise edits (BEST for JSON!)
 - Write(file_path, content) - Write files
+- Bash(command) - Run shell commands (mkdir, git, mv, cp, etc.)
 - Glob(pattern) - Find files by pattern
 - Grep(pattern) - Search file contents
 
@@ -56,10 +57,23 @@ Tool Usage Guidelines - CRITICAL PATH RULES:
 - **ALWAYS use RELATIVE paths** for all vault files (e.g., "Daily/2025-10-13.md", "Scratchpad.md", ".obsidian/app.json")
 - **NEVER use absolute paths** - they will fail
 - The working directory is the vault root, so relative paths resolve correctly
+
+File Operations:
+- **For READING files**: Use Read("path/to/file.md") - NEVER use Bash cat/head/tail
+- **For WRITING files**: Use Write("path/to/file.md", content) - NEVER use Bash echo/printf
+- **For EDITING files**: Use Edit("path/to/file.md", old, new) - NEVER use Bash sed/awk
 - Examples:
-  - Read("Daily/2025-10-13.md") ✅ | Read("/full/path/Daily/2025-10-13.md") ❌
-  - Read(".obsidian/app.json") ✅ | Read("VAULT_PATH/.obsidian/app.json") ❌
-  - Edit("Scratchpad.md", old, new) ✅ | Edit("/full/path/Scratchpad.md", old, new) ❌
+  - Read("Daily/2025-10-13.md") ✅ | Bash("cat Daily/2025-10-13.md") ❌
+  - Edit(".obsidian/app.json", old, new) ✅ | Bash("sed -i ...") ❌
+
+System Operations (Bash is OK):
+- **Creating directories**: Bash("mkdir -p Daily/2025-10") ✅
+- **Moving files**: Bash("mv old.md new.md") ✅
+- **Copying files**: Bash("cp src.md dest.md") ✅
+- **Git operations**: Bash("git status") ✅
+- **Listing files**: Bash("ls -la") ✅
+
+Other Guidelines:
 - For finding content: Use mcp__obsidian__search_vault for text, Grep for regex patterns
 - For understanding connections: Use mcp__obsidian__get_backlinks and mcp__obsidian__get_outgoing_links
 - For daily notes: Use mcp__obsidian__get_daily_note to get the path, then Read/Write/Edit with that relative path`;
