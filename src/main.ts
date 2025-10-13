@@ -503,7 +503,7 @@ class AgentChatView extends ItemView {
         let fullResponse = '';
 
         const assistantEl = messagesContainer.createDiv('agent-message assistant');
-        let hasContent = false;
+        let lastWasToolUse = false;
 
         for await (const event of stream) {
           console.log('[ObsidianAgent] Stream event:', event.type, event);
@@ -518,56 +518,57 @@ class AgentChatView extends ItemView {
             // Extract text from message content
             const message = event.message;
             if (message.content && Array.isArray(message.content)) {
-              let hasNewContent = false;
               for (const block of message.content) {
                 if (block.type === 'text') {
                   fullResponse += block.text;
-                  hasNewContent = true;
+                  // Hide thinking indicator when we get text content
+                  if (loadingEl.isConnected) {
+                    loadingEl.style.display = 'none';
+                  }
+                  lastWasToolUse = false;
                 } else if (block.type === 'tool_use') {
                   fullResponse += `\n\n*🔧 ${block.name}*\n`;
-                  hasNewContent = true;
+                  lastWasToolUse = true;
                 }
               }
 
-              // Only remove loading indicator and render when we have actual content
-              if (hasNewContent) {
-                if (!hasContent) {
-                  loadingEl.remove();
-                  hasContent = true;
-                }
+              // Render markdown
+              assistantEl.empty();
+              await MarkdownRenderer.renderMarkdown(
+                fullResponse,
+                assistantEl,
+                '/',  // Use vault root as source path for link resolution
+                this
+              );
 
-                // Render markdown
-                assistantEl.empty();
-                await MarkdownRenderer.renderMarkdown(
-                  fullResponse,
-                  assistantEl,
-                  '/',  // Use vault root as source path for link resolution
-                  this
-                );
-
-                // Make internal links clickable
-                assistantEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
-                  link.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const href = link.getAttribute('data-href');
-                    if (href) {
-                      // Open the linked file
-                      const file = this.plugin.app.metadataCache.getFirstLinkpathDest(href, '/');
-                      if (file) {
-                        this.plugin.app.workspace.getLeaf(false).openFile(file);
-                      }
+              // Make internal links clickable
+              assistantEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
+                link.addEventListener('click', (e) => {
+                  e.preventDefault();
+                  const href = link.getAttribute('data-href');
+                  if (href) {
+                    // Open the linked file
+                    const file = this.plugin.app.metadataCache.getFirstLinkpathDest(href, '/');
+                    if (file) {
+                      this.plugin.app.workspace.getLeaf(false).openFile(file);
                     }
-                  });
+                  }
                 });
+              });
 
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+              // Show thinking indicator after tool use (agent is processing results)
+              if (lastWasToolUse && loadingEl.isConnected) {
+                loadingEl.style.display = '';
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
               }
             }
           }
         }
 
-        // Clean up loading indicator if it's still there
-        if (!hasContent) {
+        // Remove loading indicator when completely done
+        if (loadingEl.isConnected) {
           loadingEl.remove();
         }
 
