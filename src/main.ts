@@ -712,7 +712,14 @@ class AgentChatView extends ItemView {
     // Create input container
     const inputContainer = container.createDiv('agent-input-container');
 
-    const textarea = inputContainer.createEl('textarea', {
+    // Wrapper for textarea and file indicator
+    const textareaWrapper = inputContainer.createDiv('agent-textarea-wrapper');
+
+    // File indicator element (shown above textarea)
+    const fileIndicator = textareaWrapper.createDiv('agent-file-indicator');
+    fileIndicator.style.display = 'none';
+
+    const textarea = textareaWrapper.createEl('textarea', {
       placeholder: 'Ask the agent to help organize your vault...',
       cls: 'agent-input'
     });
@@ -752,10 +759,6 @@ class AgentChatView extends ItemView {
 
     // Store attached file
     let attachedFile: { name: string; data: string; type: string } | null = null;
-
-    // File indicator element
-    const fileIndicator = inputContainer.createDiv('agent-file-indicator');
-    fileIndicator.style.display = 'none';
 
     uploadButton.addEventListener('click', () => {
       fileInput.click();
@@ -1279,8 +1282,15 @@ class AgentChatView extends ItemView {
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
       }
 
-      .agent-input {
+      .agent-textarea-wrapper {
         flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .agent-input {
+        width: 100%;
         min-height: 60px;
         max-height: 200px;
         padding: 10px 12px;
@@ -1305,12 +1315,12 @@ class AgentChatView extends ItemView {
       }
 
       .agent-file-indicator {
-        font-size: 0.9em;
+        font-size: 0.85em;
         color: var(--text-muted);
         padding: 4px 8px;
-        background: var(--background-secondary);
+        background: var(--background-primary);
         border-radius: 4px;
-        margin-bottom: 4px;
+        border: 1px solid var(--background-modifier-border);
       }
 
       .agent-send-button,
