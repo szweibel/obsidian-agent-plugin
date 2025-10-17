@@ -3,7 +3,7 @@ import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { ObsidianAgentSettings, DEFAULT_SETTINGS, ObsidianAgentSettingTab, BASE_PROMPT } from './settings';
+import { ObsidianAgentSettings, DEFAULT_SETTINGS, ObsidianAgentSettingTab, BASE_PROMPT, detectClaudeCodePath } from './settings';
 
 const VIEW_TYPE_AGENT_CHAT = 'agent-chat-view';
 
@@ -66,6 +66,19 @@ export default class ObsidianAgentPlugin extends Plugin {
     }
 
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+
+    // Auto-detect Claude Code path if not set
+    if (!this.settings.claudeCodePath) {
+      console.log('[ObsidianAgent] Claude Code path not set, attempting auto-detection...');
+      const detectedPath = await detectClaudeCodePath();
+      if (detectedPath) {
+        console.log('[ObsidianAgent] Auto-detected Claude Code at:', detectedPath);
+        this.settings.claudeCodePath = detectedPath;
+        await this.saveSettings();
+      } else {
+        console.log('[ObsidianAgent] Could not auto-detect Claude Code path');
+      }
+    }
   }
 
   async saveSettings() {
@@ -613,49 +626,44 @@ export default class ObsidianAgentPlugin extends Plugin {
     let prompt: any = userQuery;
 
     if (attachment) {
-      // Build content blocks for message with attachment
-      const contentBlocks: any[] = [
-        {
-          type: 'text',
-          text: userQuery,
+      // Agent SDK doesn't support inline attachments - save to temp and reference path
+      const tempDir = path.join(this.vaultPath, '.temp-uploads');
+      const tempPath = path.join(tempDir, attachment.name);
+
+      try {
+        console.log('[ObsidianAgent] Saving attachment to:', tempPath);
+        await fs.mkdir(tempDir, { recursive: true });
+
+        // Write file based on type
+        if (attachment.type.startsWith('image/') || attachment.type === 'application/pdf') {
+          // For images/PDFs, write base64 data as binary
+          const base64Data = attachment.data.split(',')[1];
+          const buffer = Buffer.from(base64Data, 'base64');
+          await fs.writeFile(tempPath, buffer);
+          console.log('[ObsidianAgent] Saved binary file:', attachment.type);
+        } else {
+          // For text files, write as UTF-8
+          await fs.writeFile(tempPath, attachment.data, 'utf-8');
+          console.log('[ObsidianAgent] Saved text file');
         }
-      ];
 
-      if (attachment.type.startsWith('image/')) {
-        // Add image block
-        contentBlocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: attachment.type,
-            data: attachment.data.split(',')[1], // Remove data:image/...;base64, prefix
-          }
-        });
-      } else if (attachment.type === 'application/pdf') {
-        // Add document block for PDF
-        contentBlocks.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: attachment.data.split(',')[1],
-          }
-        });
-      } else {
-        // Text file - add as text block
-        contentBlocks.push({
-          type: 'text',
-          text: `\n\nFile: ${attachment.name}\n\`\`\`\n${attachment.data}\n\`\`\``,
-        });
+        // Use simple string prompt - Claude will use Read tool to access it
+        prompt = `${userQuery}\n\nI've uploaded a file: ${attachment.name}\nLocation: ${tempPath}\nPlease read and help me with it.`;
+        console.log('[ObsidianAgent] Prompt with attachment:', prompt.substring(0, 200));
+      } catch (err: any) {
+        console.error('[ObsidianAgent] Error writing temp file:', err);
+        // Fallback: inline for text files only
+        if (!attachment.type.startsWith('image/') && attachment.type !== 'application/pdf') {
+          prompt = `${userQuery}\n\nAttached file: ${attachment.name}\n\nContent:\n${attachment.data}`;
+        } else {
+          throw new Error(`Failed to save ${attachment.type} file: ${err.message}`);
+        }
       }
+    }
 
-      // Create async iterator for the message
-      prompt = (async function*() {
-        yield {
-          role: 'user',
-          content: contentBlocks,
-        };
-      })();
+    console.log('[ObsidianAgent] About to call query with prompt type:', typeof prompt);
+    if (typeof prompt === 'string') {
+      console.log('[ObsidianAgent] Prompt string (first 300 chars):', prompt.substring(0, 300));
     }
 
     return query({
@@ -717,7 +725,8 @@ class AgentChatView extends ItemView {
       cls: 'agent-file-input'
     });
     fileInput.style.display = 'none';
-    fileInput.accept = 'image/*,.pdf,.txt,.md,.doc,.docx';
+    // Don't set accept attribute - allows all file types
+    // fileInput.accept is intentionally not set
 
     const uploadButton = buttonContainer.createEl('button', {
       text: '📎',
@@ -785,13 +794,13 @@ class AgentChatView extends ItemView {
           };
           reader.readAsDataURL(file);
         } else {
-          // Text-based files
+          // Text-based files (CSV, JSON, TXT, etc.)
           const reader = new FileReader();
           reader.onload = () => {
             attachedFile = {
               name: file.name,
               data: reader.result as string,
-              type: 'text'
+              type: file.type || 'text/plain'  // Preserve MIME type or default to text/plain
             };
             fileIndicator.setText(`📎 ${file.name}`);
             fileIndicator.style.display = 'block';
@@ -842,7 +851,7 @@ class AgentChatView extends ItemView {
         let lastWasToolUse = false;
 
         for await (const event of stream) {
-          console.log('[ObsidianAgent] Stream event:', event.type, event);
+          console.log('[ObsidianAgent] Stream event:', event.type, 'subtype:', event.subtype, event);
 
           // Capture session ID from first system init event
           if (event.type === 'system' && event.subtype === 'init' && !this.sessionId) {
@@ -1083,6 +1092,11 @@ class AgentChatView extends ItemView {
         word-break: break-word;
         overflow-x: auto;
         border-bottom-right-radius: 4px;
+      }
+
+      .agent-message.user * {
+        user-select: text;
+        cursor: text;
       }
 
       .agent-message.assistant {

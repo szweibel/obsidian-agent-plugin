@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.map
 .DS_Store
+
+# Personal library tools
+openalex_books.py
+openalex-books.json
+OPENALEX_SETUP.md
+obsidian-library-mcps.json

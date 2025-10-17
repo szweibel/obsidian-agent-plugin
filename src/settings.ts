@@ -80,63 +80,45 @@ Other Guidelines:
 - For daily notes: Use mcp__obsidian__get_daily_note to get the path, then Read/Write/Edit with that relative path`;
 
 // This is the editable workflow section
-export const DEFAULT_WORKFLOW = `## Your Linking Philosophy
+export const DEFAULT_WORKFLOW = `## Default Linking Philosophy
 
-You strongly prefer a well-linked, interconnected vault (Zettelkasten-style):
+This plugin encourages a well-linked, interconnected vault (Zettelkasten-style):
 
-LINKING RULES:
-1. **Always suggest links** - When creating or reorganizing content, actively identify and create [[wiki links]] between related concepts
-2. **Link concepts, not categories** - Link ideas that have meaningful relationships, not generic groupings (avoid [[work]], [[personal]])
-3. **Atomic notes** - Prefer focused, single-concept notes that can be richly interlinked
-4. **Bidirectional thinking** - Remember that links create automatic backlinks, building a knowledge graph
-5. **Link to future notes** - It's fine to create [[links to notes that don't exist yet]] if they represent ideas worth developing
-6. **Context over bare links** - When suggesting links, embed them in sentences that explain the relationship
-   - Good: "This teaching approach relates to [[Pedagogy]] because it emphasizes student-centered learning"
-   - Avoid: "Related: [[Pedagogy]]"
+LINKING GUIDELINES:
+1. **Suggest meaningful links** - When organizing content, identify and create [[wiki links]] between related concepts
+2. **Link concepts, not categories** - Link ideas with meaningful relationships rather than generic groupings
+3. **Atomic notes** - Encourage focused, single-concept notes that can be richly interlinked
+4. **Bidirectional thinking** - Links create automatic backlinks, building a knowledge graph
+5. **Context over bare links** - Embed links in sentences that explain the relationship
+   - Example: "This approach relates to [[Concept]] because it shares similar principles"
 
-WHEN ORGANIZING CONTENT:
-- Look for existing notes that should be linked from new content
-- Suggest creating new atomic notes for distinct concepts mentioned in rambling daily notes
-- When moving content from daily notes to permanent notes, ADD cross-links to related existing notes
-- After creating new notes, suggest 2-3 existing notes that should link TO the new note (create backlink opportunities)
+WHEN ORGANIZING:
+- Look for existing notes that relate to new content
+- Suggest creating atomic notes for distinct concepts
+- When moving content between notes, add cross-links to related existing notes
+- After creating new notes, suggest existing notes that could link to them
 
-DON'T:
-- Create generic category links like [[work]] or [[personal]] (use tags/folders instead)
-- Over-link every common word (only meaningful conceptual connections)
-- Leave notes isolated without any connections
+## Inbox Processing Workflow
 
-## Scratchpad Workflow
+Many users maintain an inbox note for quick captures. When asked to process or organize:
 
-The user uses Scratchpad.md as a capture inbox, then processes content into permanent notes:
+1. **Review the content** - Read through accumulated captures
+2. **Identify distinct concepts** - Look for ideas that deserve their own notes
+3. **Move to permanent notes** - Organize by topic into appropriate locations
+4. **Add cross-links** - Connect new content to related existing notes
+5. **Clean up the inbox** - Remove processed items to keep it clear
+6. **Create backlink opportunities** - Suggest where new notes should be referenced
 
-SCRATCHPAD AS INBOX:
-- Scratchpad.md (root level) is for quick capture of thoughts, tasks, links, and random ideas
-- Don't worry about organization during capture
-- Items accumulate until the user processes them
+## Customization
 
-PROCESSING WORKFLOW (Weekly Review):
-When asked to "process scratchpad" or "organize captures":
-1. **Read Scratchpad.md** - Review all current content
-2. **Identify distinct concepts** - Look for ideas that deserve their own atomic notes
-3. **Move to permanent notes**:
-   - Work items → Library/ folder
-   - Personal projects → appropriate folders (Books, Guitar, Game, etc.)
-   - Life admin → Life info/ folder
-   - Research/ideas → LLMs/, Writing/, or create new topic notes
-4. **Add cross-links** - When moving content, ADD links to related existing notes
-5. **Clean up Scratchpad** - After moving content, clear the processed items from Scratchpad.md
-6. **Create backlinks** - Suggest 2-3 existing notes that should link to newly created permanent notes
+**This is a starting point!** Customize this workflow in Settings to match your vault:
+- Change folder structures to match your organization
+- Adjust linking preferences (more or less aggressive)
+- Specify your inbox note name and location
+- Define your daily notes format and processing workflow
+- Add specific rules for your personal knowledge management system
 
-DAILY NOTES (Optional):
-- If the user mentions daily notes (Daily/YYYY-MM-DD.md), process them similarly
-- But default assumption is Scratchpad.md for inbox
-
-WHEN PROCESSING:
-- Show what content was found before moving it
-- Suggest destination notes (existing or new)
-- Explain why certain items should be linked together
-- Propose atomic note splits for complex captures
-- After moving items, remove them from Scratchpad to keep it clean`;
+The agent will adapt to your customized workflow while maintaining the core organizational principles.`;
 
 export const DEFAULT_SETTINGS: ObsidianAgentSettings = {
   claudeCodePath: '',
@@ -144,7 +126,7 @@ export const DEFAULT_SETTINGS: ObsidianAgentSettings = {
   customMcpConfigPath: '',
 };
 
-async function detectClaudeCodePath(): Promise<string | null> {
+export async function detectClaudeCodePath(): Promise<string | null> {
   const possiblePaths = [
     // Linux/Mac
     path.join(process.env.HOME || '', '.local', 'bin', 'claude'),

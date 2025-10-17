@@ -5,6 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "build:dev": "node esbuild.config.mjs && cp dist/main.js '/mnt/c/Users/onepe/Documents/Obsidian Vault/.obsidian/plugins/obsidian-agent/main.js' && echo 'Build copied to Obsidian'",
     "dev": "node esbuild.config.mjs --watch"
   },
   "keywords": [
