@@ -1,10 +1,31 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
 *.map
-.DS_Store
 
-# Personal library tools
-openalex_books.py
-openalex-books.json
-OPENALEX_SETUP.md
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local settings and workflows
+src/settings.ts
 obsidian-library-mcps.json
+
+# Personal library/research tools and workflows
+openalex*.py
+openalex*.json
+openalex*.md
+OPENALEX*.md
+
+# Temp and local files
+.temp-uploads/
+*.local.*
