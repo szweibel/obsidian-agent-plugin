@@ -677,12 +677,22 @@ export default class ObsidianAgentPlugin extends Plugin {
   }
 }
 
+interface ToolUseData {
+  id: string;
+  name: string;
+  input: any;
+  result?: any;
+  element?: HTMLElement;
+  isExpanded: boolean;
+}
+
 class AgentChatView extends ItemView {
   private plugin: ObsidianAgentPlugin;
   private messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   private isLoading = false;
   private sessionId: string | null = null;
   private abortController: AbortController | null = null;
+  private currentToolUses: Map<string, ToolUseData> = new Map();
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianAgentPlugin) {
     super(leaf);
@@ -849,9 +859,58 @@ class AgentChatView extends ItemView {
         const stream = await this.plugin.sendQuery(queryText, this.sessionId || undefined, this.abortController.signal, fileToSend);
         console.log('[ObsidianAgent] Query stream obtained, processing events...');
         let fullResponse = '';
+        this.currentToolUses.clear(); // Clear tool uses from previous query
 
         const assistantEl = messagesContainer.createDiv('agent-message assistant');
         let lastWasToolUse = false;
+        let currentTextContainer: HTMLElement | null = null;
+        let currentSectionText = '';
+        let renderTimeout: NodeJS.Timeout | null = null;
+
+        // Debounced render function
+        const scheduleRender = () => {
+          if (renderTimeout) {
+            clearTimeout(renderTimeout);
+          }
+          renderTimeout = setTimeout(() => performRender(), 150);
+        };
+
+        // Immediate render function
+        const performRender = async () => {
+          if (renderTimeout) {
+            clearTimeout(renderTimeout);
+            renderTimeout = null;
+          }
+
+          if (!currentTextContainer || !currentSectionText.trim()) return;
+
+          currentTextContainer.empty();
+          await MarkdownRenderer.renderMarkdown(
+            currentSectionText,
+            currentTextContainer,
+            '/',
+            this
+          );
+
+          this.fixOverflowOnElement(currentTextContainer);
+
+          // Make internal links clickable
+          currentTextContainer.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
+            link.addEventListener('click', (e) => {
+              e.preventDefault();
+              const href = link.getAttribute('data-href');
+              if (href) {
+                const file = this.plugin.app.metadataCache.getFirstLinkpathDest(href, '/');
+                if (file) {
+                  this.plugin.app.workspace.getLeaf(false).openFile(file);
+                }
+              }
+            });
+          });
+
+          // Scroll to bottom
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        };
 
         for await (const event of stream) {
           console.log('[ObsidianAgent] Stream event:', event.type, 'subtype:', event.subtype, event);
@@ -866,46 +925,52 @@ class AgentChatView extends ItemView {
             // Extract text from message content
             const message = event.message;
             if (message.content && Array.isArray(message.content)) {
+              // Process each block incrementally
               for (const block of message.content) {
                 if (block.type === 'text') {
                   fullResponse += block.text;
+                  currentSectionText += block.text;
+
                   // Hide thinking indicator when we get text content
                   if (loadingEl.isConnected) {
                     loadingEl.style.display = 'none';
                   }
+
+                  // Create text container if needed
+                  if (!currentTextContainer) {
+                    currentTextContainer = assistantEl.createDiv('assistant-text-content');
+                  }
+
+                  // Schedule debounced render
+                  scheduleRender();
+
                   lastWasToolUse = false;
                 } else if (block.type === 'tool_use') {
-                  fullResponse += `\n\n*🔧 ${block.name}*\n`;
+                  // Force immediate render of pending text before tool
+                  await performRender();
+
+                  // Track tool use and create component
+                  const toolId = block.id || `tool_${Date.now()}_${Math.random()}`;
+                  if (!this.currentToolUses.has(toolId)) {
+                    const toolData: ToolUseData = {
+                      id: toolId,
+                      name: block.name,
+                      input: block.input,
+                      isExpanded: false,
+                    };
+                    this.currentToolUses.set(toolId, toolData);
+
+                    // Append tool component
+                    const toolElement = this.createToolUseElement(toolData);
+                    assistantEl.appendChild(toolElement);
+
+                    // Next text will go in a new container with fresh text
+                    currentTextContainer = null;
+                    currentSectionText = '';
+                  }
                   lastWasToolUse = true;
                 }
               }
-
-              // Render markdown
-              assistantEl.empty();
-              await MarkdownRenderer.renderMarkdown(
-                fullResponse,
-                assistantEl,
-                '/',  // Use vault root as source path for link resolution
-                this
-              );
-
-              // Fix overflow on all rendered containers (Obsidian applies its own styles)
-              this.fixOverflowOnElement(assistantEl);
-
-              // Make internal links clickable
-              assistantEl.querySelectorAll('a.internal-link').forEach((link: HTMLElement) => {
-                link.addEventListener('click', (e) => {
-                  e.preventDefault();
-                  const href = link.getAttribute('data-href');
-                  if (href) {
-                    // Open the linked file
-                    const file = this.plugin.app.metadataCache.getFirstLinkpathDest(href, '/');
-                    if (file) {
-                      this.plugin.app.workspace.getLeaf(false).openFile(file);
-                    }
-                  }
-                });
-              });
 
               // Show thinking indicator after tool use (agent is processing results)
               if (lastWasToolUse && loadingEl.isConnected) {
@@ -920,7 +985,33 @@ class AgentChatView extends ItemView {
               }
             }
           }
+
+          // Handle tool results (may come as user messages with tool_result blocks)
+          if (event.type === 'user' && event.message?.content && Array.isArray(event.message.content)) {
+            for (const block of event.message.content) {
+              if (block.type === 'tool_result') {
+                const toolId = block.tool_use_id;
+                const toolData = this.currentToolUses.get(toolId);
+
+                if (toolData) {
+                  // Update tool data with result
+                  toolData.result = block.content;
+
+                  // Re-create the tool element with the result
+                  if (toolData.element) {
+                    const newElement = this.createToolUseElement(toolData);
+                    toolData.element.replaceWith(newElement);
+                  }
+
+                  console.log('[ObsidianAgent] Updated tool result for:', toolData.name);
+                }
+              }
+            }
+          }
         }
+
+        // Force final render of any pending text
+        await performRender();
 
         // Remove loading indicator when completely done
         if (loadingEl.isConnected) {
@@ -990,6 +1081,92 @@ class AgentChatView extends ItemView {
       div.style.overflow = 'visible';
       div.style.maxHeight = 'none';
     });
+  }
+
+  createToolUseElement(toolData: ToolUseData): HTMLElement {
+    const container = document.createElement('div');
+    container.className = 'tool-use-container';
+
+    // Create header (clickable)
+    const header = document.createElement('div');
+    header.className = 'tool-use-header';
+
+    const chevron = document.createElement('span');
+    chevron.className = 'tool-use-chevron';
+    chevron.textContent = '▶';
+
+    const toolName = document.createElement('span');
+    toolName.className = 'tool-use-name';
+    toolName.textContent = ` 🔧 ${toolData.name}`;
+
+    header.appendChild(chevron);
+    header.appendChild(toolName);
+
+    // Create collapsible content
+    const content = document.createElement('div');
+    content.className = 'tool-use-content';
+    content.style.display = 'none';
+
+    // Parameters section
+    const paramsSection = document.createElement('div');
+    paramsSection.className = 'tool-use-section';
+
+    const paramsLabel = document.createElement('div');
+    paramsLabel.className = 'tool-use-section-label';
+    paramsLabel.textContent = 'Parameters:';
+
+    const paramsValue = document.createElement('pre');
+    paramsValue.className = 'tool-use-json';
+    paramsValue.textContent = JSON.stringify(toolData.input, null, 2);
+
+    paramsSection.appendChild(paramsLabel);
+    paramsSection.appendChild(paramsValue);
+    content.appendChild(paramsSection);
+
+    // Results section (if available)
+    if (toolData.result !== undefined) {
+      const resultsSection = document.createElement('div');
+      resultsSection.className = 'tool-use-section';
+
+      const resultsLabel = document.createElement('div');
+      resultsLabel.className = 'tool-use-section-label';
+      resultsLabel.textContent = 'Result:';
+
+      const resultsValue = document.createElement('pre');
+      resultsValue.className = 'tool-use-json';
+
+      // Format result based on type
+      if (typeof toolData.result === 'string') {
+        resultsValue.textContent = toolData.result;
+      } else {
+        resultsValue.textContent = JSON.stringify(toolData.result, null, 2);
+      }
+
+      resultsSection.appendChild(resultsLabel);
+      resultsSection.appendChild(resultsValue);
+      content.appendChild(resultsSection);
+    }
+
+    // Click handler for expand/collapse
+    header.addEventListener('click', () => {
+      toolData.isExpanded = !toolData.isExpanded;
+
+      if (toolData.isExpanded) {
+        content.style.display = 'block';
+        chevron.textContent = '▼';
+      } else {
+        content.style.display = 'none';
+        chevron.textContent = '▶';
+      }
+    });
+
+    container.appendChild(header);
+    container.appendChild(content);
+
+    // Store reference to element
+    toolData.element = container;
+
+    return container;
   }
 
   async addMessage(container: HTMLElement, role: 'user' | 'assistant', content: string) {
@@ -1270,6 +1447,80 @@ class AgentChatView extends ItemView {
         font-size: 0.9em;
         opacity: 0.7;
         margin-top: 4px;
+      }
+
+      /* Tool use expandable components */
+      .tool-use-container {
+        margin: 8px 0;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 6px;
+        background: var(--background-primary);
+        overflow: hidden;
+      }
+
+      .tool-use-header {
+        padding: 8px 12px;
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--background-primary-alt);
+        transition: background 0.2s;
+      }
+
+      .tool-use-header:hover {
+        background: var(--background-modifier-hover);
+      }
+
+      .tool-use-chevron {
+        display: inline-block;
+        transition: transform 0.2s;
+        font-size: 0.8em;
+        width: 12px;
+      }
+
+      .tool-use-name {
+        font-size: 0.9em;
+        font-weight: 500;
+      }
+
+      .tool-use-content {
+        padding: 12px;
+        border-top: 1px solid var(--background-modifier-border);
+        background: var(--background-secondary);
+      }
+
+      .tool-use-section {
+        margin-bottom: 12px;
+      }
+
+      .tool-use-section:last-child {
+        margin-bottom: 0;
+      }
+
+      .tool-use-section-label {
+        font-size: 0.85em;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .tool-use-json {
+        margin: 0;
+        padding: 8px;
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 4px;
+        font-family: var(--font-monospace);
+        font-size: 0.85em;
+        line-height: 1.5;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        color: var(--text-normal);
       }
 
       .agent-input-container {
