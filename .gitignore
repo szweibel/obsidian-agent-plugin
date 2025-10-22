@@ -16,8 +16,7 @@ Thumbs.db
 *.swo
 *~
 
-# Local settings and workflows
-src/settings.ts
+# Local tools configuration
 obsidian-library-mcps.json
 
 # Personal library/research tools and workflows
