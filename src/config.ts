@@ -125,35 +125,41 @@ export async function detectClaudeCodePath(): Promise<string | null> {
       try {
         await fs.promises.access(claudePath, fs.constants.X_OK);
 
-        // Found NVM installation - create wrapper script
-        const wrapperDir = path.join(process.env.HOME || '', '.local', 'bin');
-        const wrapperPath = path.join(wrapperDir, 'claude-obsidian-wrapper');
+        // Found NVM installation - check if it needs a wrapper
         const nodePath = path.join(versionsDir, version, 'bin', 'node');
-        const cliPath = path.join(versionsDir, version, 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'cli.js');
 
-        // Check if CLI entrypoint exists
+        // Read the claude script to see if it uses #!/usr/bin/env
         try {
-          await fs.promises.access(cliPath, fs.constants.R_OK);
-        } catch {
-          // CLI path doesn't exist, try alternate location
-          continue;
-        }
+          const claudeContent = await fs.promises.readFile(claudePath, 'utf8');
+          const firstLine = claudeContent.split('\n')[0];
 
-        // Create wrapper directory if needed
-        await fs.promises.mkdir(wrapperDir, { recursive: true });
+          // If it uses #!/usr/bin/env node, create a wrapper
+          if (firstLine.includes('#!/usr/bin/env node')) {
+            const wrapperDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.local', 'bin');
+            const wrapperPath = path.join(wrapperDir, 'claude-obsidian-wrapper');
 
-        // Create wrapper script
-        const wrapperScript = `#!/bin/bash
+            // Create wrapper directory if needed
+            await fs.promises.mkdir(wrapperDir, { recursive: true });
+
+            // Create wrapper that executes the claude script with the NVM node
+            const wrapperScript = `#!/bin/bash
 # Auto-generated wrapper for Claude Code (NVM installation)
 # This bypasses #!/usr/bin/env node which doesn't work in GUI apps
 NODE="${nodePath}"
-CLI="${cliPath}"
-exec "$NODE" "$CLI" "$@"
+CLAUDE="${claudePath}"
+exec "$NODE" "$CLAUDE" "$@"
 `;
 
-        await fs.promises.writeFile(wrapperPath, wrapperScript, { mode: 0o755 });
-
-        return wrapperPath;
+            await fs.promises.writeFile(wrapperPath, wrapperScript, { mode: 0o755 });
+            return wrapperPath;
+          } else {
+            // Not a #!/usr/bin/env script, can use directly
+            return claudePath;
+          }
+        } catch {
+          // Can't read the file, skip this version
+          continue;
+        }
       } catch {
         // Continue checking
       }
