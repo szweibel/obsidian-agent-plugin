@@ -110,6 +110,8 @@ export async function detectClaudeCodePath(): Promise<string | null> {
   }
 
   // Check NVM installations (Node Version Manager)
+  // NVM-installed scripts use #!/usr/bin/env node which fails in GUI apps
+  // Create a wrapper script that hard-codes paths
   const nvmDir = process.env.NVM_DIR || path.join(process.env.HOME || '', '.nvm');
   const versionsDir = path.join(nvmDir, 'versions', 'node');
 
@@ -122,7 +124,36 @@ export async function detectClaudeCodePath(): Promise<string | null> {
       const claudePath = path.join(versionsDir, version, 'bin', 'claude');
       try {
         await fs.promises.access(claudePath, fs.constants.X_OK);
-        return claudePath;
+
+        // Found NVM installation - create wrapper script
+        const wrapperDir = path.join(process.env.HOME || '', '.local', 'bin');
+        const wrapperPath = path.join(wrapperDir, 'claude-obsidian-wrapper');
+        const nodePath = path.join(versionsDir, version, 'bin', 'node');
+        const cliPath = path.join(versionsDir, version, 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'cli.js');
+
+        // Check if CLI entrypoint exists
+        try {
+          await fs.promises.access(cliPath, fs.constants.R_OK);
+        } catch {
+          // CLI path doesn't exist, try alternate location
+          continue;
+        }
+
+        // Create wrapper directory if needed
+        await fs.promises.mkdir(wrapperDir, { recursive: true });
+
+        // Create wrapper script
+        const wrapperScript = `#!/bin/bash
+# Auto-generated wrapper for Claude Code (NVM installation)
+# This bypasses #!/usr/bin/env node which doesn't work in GUI apps
+NODE="${nodePath}"
+CLI="${cliPath}"
+exec "$NODE" "$CLI" "$@"
+`;
+
+        await fs.promises.writeFile(wrapperPath, wrapperScript, { mode: 0o755 });
+
+        return wrapperPath;
       } catch {
         // Continue checking
       }
