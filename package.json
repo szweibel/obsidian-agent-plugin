@@ -1,6 +1,6 @@
 {
   "name": "obsidian-agent-plugin",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "AI agent powered by Claude for organizing your Obsidian vault",
   "main": "dist/main.js",
   "scripts": {
