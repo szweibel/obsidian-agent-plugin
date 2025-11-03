@@ -135,23 +135,51 @@ export async function detectClaudeCodePath(): Promise<string | null> {
 
           // If it uses #!/usr/bin/env node, create a wrapper
           if (firstLine.includes('#!/usr/bin/env node')) {
-            const wrapperDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.local', 'bin');
-            const wrapperPath = path.join(wrapperDir, 'claude-obsidian-wrapper');
+            const wrapperDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.cache', 'obsidian-agent');
+            const wrapperPath = path.join(wrapperDir, 'claude-wrapper');
 
-            // Create wrapper directory if needed
-            await fs.promises.mkdir(wrapperDir, { recursive: true });
+            // Try to create wrapper directory and script
+            try {
+              // Create wrapper directory if needed
+              await fs.promises.mkdir(wrapperDir, { recursive: true });
+              console.log(`[ObsidianAgent] Created wrapper directory: ${wrapperDir}`);
 
-            // Create wrapper that executes the claude script with the NVM node
-            const wrapperScript = `#!/bin/bash
+              // Create wrapper that executes the claude script with the NVM node
+              // This wrapper auto-detects the current NVM version, so it adapts if the user switches node versions
+              const wrapperScript = `#!/bin/bash
 # Auto-generated wrapper for Claude Code (NVM installation)
 # This bypasses #!/usr/bin/env node which doesn't work in GUI apps
+# Auto-detects current NVM version with claude installed
+
+NVM_DIR="\${NVM_DIR:-$HOME/.nvm}"
+
+# Try to find the latest node version with claude installed
+if [ -d "$NVM_DIR/versions/node" ]; then
+  for version in $(ls -r "$NVM_DIR/versions/node" 2>/dev/null); do
+    if [ -x "$NVM_DIR/versions/node/$version/bin/claude" ]; then
+      NODE="$NVM_DIR/versions/node/$version/bin/node"
+      CLAUDE="$NVM_DIR/versions/node/$version/bin/claude"
+      exec "$NODE" "$CLAUDE" "$@"
+    fi
+  done
+fi
+
+# Fallback to hardcoded paths from initial detection
 NODE="${nodePath}"
 CLAUDE="${claudePath}"
 exec "$NODE" "$CLAUDE" "$@"
 `;
 
-            await fs.promises.writeFile(wrapperPath, wrapperScript, { mode: 0o755 });
-            return wrapperPath;
+              await fs.promises.writeFile(wrapperPath, wrapperScript, { mode: 0o755 });
+              console.log(`[ObsidianAgent] Created wrapper script: ${wrapperPath}`);
+              return wrapperPath;
+            } catch (wrapperError) {
+              console.warn(`[ObsidianAgent] Failed to create wrapper script:`, wrapperError);
+              console.log(`[ObsidianAgent] Falling back to direct NVM path (may not work in GUI): ${claudePath}`);
+              // Fall back to returning the direct path
+              // This might not work in GUI apps, but it's better than nothing
+              return claudePath;
+            }
           } else {
             // Not a #!/usr/bin/env script, can use directly
             return claudePath;
