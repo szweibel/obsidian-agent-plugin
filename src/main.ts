@@ -4,6 +4,7 @@ import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ObsidianAgentSettings, DEFAULT_SETTINGS, ObsidianAgentSettingTab, BASE_PROMPT, detectClaudeCodePath } from './settings';
+import { ChangeTracker, FileChange } from './diff-utils';
 
 const VIEW_TYPE_AGENT_CHAT = 'agent-chat-view';
 
@@ -684,6 +685,8 @@ interface ToolUseData {
   result?: any;
   element?: HTMLElement;
   isExpanded: boolean;
+  fileChange?: FileChange;
+  fileStateBefore?: string | null;
 }
 
 class AgentChatView extends ItemView {
@@ -693,6 +696,7 @@ class AgentChatView extends ItemView {
   private sessionId: string | null = null;
   private abortController: AbortController | null = null;
   private currentToolUses: Map<string, ToolUseData> = new Map();
+  private changeTracker: ChangeTracker = new ChangeTracker();
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianAgentPlugin) {
     super(leaf);
@@ -958,6 +962,27 @@ class AgentChatView extends ItemView {
                       input: block.input,
                       isExpanded: false,
                     };
+
+                    // Capture file state before Write/Edit operations
+                    if (block.name === 'Write' || block.name === 'Edit') {
+                      const filePath = block.input?.file_path;
+                      if (filePath) {
+                        try {
+                          // Try to read current file content
+                          const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+                          if (file instanceof TFile) {
+                            toolData.fileStateBefore = await this.plugin.app.vault.read(file);
+                          } else {
+                            // File doesn't exist yet (new file)
+                            toolData.fileStateBefore = null;
+                          }
+                        } catch (error) {
+                          console.log('[ObsidianAgent] Could not read file before change:', error);
+                          toolData.fileStateBefore = null;
+                        }
+                      }
+                    }
+
                     this.currentToolUses.set(toolId, toolData);
 
                     // Append tool component
@@ -996,6 +1021,32 @@ class AgentChatView extends ItemView {
                 if (toolData) {
                   // Update tool data with result
                   toolData.result = block.content;
+
+                  // For Write/Edit operations, capture after state and generate diff
+                  if ((toolData.name === 'Write' || toolData.name === 'Edit') && toolData.fileStateBefore !== undefined) {
+                    const filePath = toolData.input?.file_path;
+                    if (filePath) {
+                      try {
+                        const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+                        if (file instanceof TFile) {
+                          const fileStateAfter = await this.plugin.app.vault.read(file);
+
+                          // Generate and store diff
+                          const fileChange = this.changeTracker.recordChange(
+                            filePath,
+                            toolData.name === 'Write' ? 'write' : 'edit',
+                            toolData.fileStateBefore,
+                            fileStateAfter
+                          );
+                          toolData.fileChange = fileChange;
+
+                          console.log('[ObsidianAgent] Generated diff for:', filePath);
+                        }
+                      } catch (error) {
+                        console.error('[ObsidianAgent] Could not generate diff:', error);
+                      }
+                    }
+                  }
 
                   // Re-create the tool element with the result
                   if (toolData.element) {
@@ -1083,6 +1134,39 @@ class AgentChatView extends ItemView {
     });
   }
 
+  async revertChange(fileChange: FileChange): Promise<void> {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath(fileChange.filePath);
+
+      if (fileChange.oldContent === null) {
+        // File was newly created, delete it
+        if (file instanceof TFile) {
+          await this.plugin.app.vault.delete(file);
+          new Notice(`Reverted: Deleted ${fileChange.filePath}`);
+          console.log('[ObsidianAgent] Reverted file creation:', fileChange.filePath);
+        }
+      } else {
+        // File was modified, restore old content
+        if (file instanceof TFile) {
+          await this.plugin.app.vault.modify(file, fileChange.oldContent);
+          new Notice(`Reverted changes to ${fileChange.filePath}`);
+          console.log('[ObsidianAgent] Reverted file modification:', fileChange.filePath);
+        } else {
+          // File was deleted after being modified, recreate it
+          await this.plugin.app.vault.create(fileChange.filePath, fileChange.oldContent);
+          new Notice(`Reverted: Restored ${fileChange.filePath}`);
+          console.log('[ObsidianAgent] Reverted file deletion:', fileChange.filePath);
+        }
+      }
+
+      // Clear the change from tracker
+      this.changeTracker.clearChange(fileChange.id);
+    } catch (error: any) {
+      console.error('[ObsidianAgent] Error reverting change:', error);
+      new Notice(`Error reverting change: ${error.message}`);
+    }
+  }
+
   createToolUseElement(toolData: ToolUseData): HTMLElement {
     const container = document.createElement('div');
     container.className = 'tool-use-container';
@@ -1145,6 +1229,43 @@ class AgentChatView extends ItemView {
       resultsSection.appendChild(resultsLabel);
       resultsSection.appendChild(resultsValue);
       content.appendChild(resultsSection);
+    }
+
+    // Diff section (if available for Write/Edit operations)
+    if (toolData.fileChange) {
+      const diffSection = document.createElement('div');
+      diffSection.className = 'tool-use-section';
+
+      const diffHeader = document.createElement('div');
+      diffHeader.style.display = 'flex';
+      diffHeader.style.justifyContent = 'space-between';
+      diffHeader.style.alignItems = 'center';
+      diffHeader.style.marginBottom = '4px';
+
+      const diffLabel = document.createElement('div');
+      diffLabel.className = 'tool-use-section-label';
+      diffLabel.textContent = 'Changes:';
+
+      const revertButton = document.createElement('button');
+      revertButton.className = 'tool-use-revert-button';
+      revertButton.textContent = '↶ Revert';
+      revertButton.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.revertChange(toolData.fileChange!);
+        revertButton.disabled = true;
+        revertButton.textContent = '✓ Reverted';
+      });
+
+      diffHeader.appendChild(diffLabel);
+      diffHeader.appendChild(revertButton);
+
+      const diffValue = document.createElement('pre');
+      diffValue.className = 'tool-use-diff';
+      diffValue.textContent = toolData.fileChange.diff;
+
+      diffSection.appendChild(diffHeader);
+      diffSection.appendChild(diffValue);
+      content.appendChild(diffSection);
     }
 
     // Click handler for expand/collapse
@@ -1634,6 +1755,59 @@ class AgentChatView extends ItemView {
       .agent-upload-button:hover {
         background: var(--background-secondary-alt);
         transform: translateY(-1px);
+      }
+
+      /* Diff styling */
+      .tool-use-diff {
+        margin: 0;
+        padding: 12px;
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 4px;
+        font-family: var(--font-monospace);
+        font-size: 0.8em;
+        line-height: 1.5;
+        overflow-x: auto;
+        white-space: pre;
+        color: var(--text-normal);
+      }
+
+      .tool-use-diff::before {
+        content: '';
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      /* Revert button */
+      .tool-use-revert-button {
+        padding: 4px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--background-modifier-border);
+        background: var(--background-primary);
+        color: var(--text-normal);
+        cursor: pointer;
+        font-size: 0.85em;
+        font-weight: 500;
+        transition: all 0.2s;
+      }
+
+      .tool-use-revert-button:hover {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        border-color: var(--interactive-accent);
+      }
+
+      .tool-use-revert-button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        background: var(--background-modifier-success);
+        color: var(--text-on-accent);
+        border-color: var(--background-modifier-success);
+      }
+
+      .tool-use-revert-button:disabled:hover {
+        background: var(--background-modifier-success);
+        border-color: var(--background-modifier-success);
       }
     `;
     document.head.appendChild(style);
