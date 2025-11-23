@@ -8,6 +8,7 @@ export interface FileChange {
 	oldContent: string | null;
 	newContent: string;
 	diff: string;
+	reverted: boolean;
 }
 
 export class ChangeTracker {
@@ -19,17 +20,19 @@ export class ChangeTracker {
 		oldContent: string | null,
 		newContent: string
 	): FileChange {
-		const id = `${Date.now()}_${filePath}`;
-		const diff = this.generateDiff(oldContent || '', newContent, filePath);
+		const timestamp = Date.now();
+		const id = `${timestamp}_${filePath}`;
+		const diff = this.generateFormattedDiff(oldContent || '', newContent);
 
 		const change: FileChange = {
 			id,
-			timestamp: Date.now(),
+			timestamp,
 			filePath,
 			operation,
 			oldContent,
 			newContent,
-			diff
+			diff,
+			reverted: false
 		};
 
 		this.changes.set(id, change);
@@ -38,6 +41,20 @@ export class ChangeTracker {
 
 	getChange(id: string): FileChange | undefined {
 		return this.changes.get(id);
+	}
+
+	markAsReverted(id: string): void {
+		const change = this.changes.get(id);
+		if (change) {
+			change.reverted = true;
+		}
+	}
+
+	markAsRestored(id: string): void {
+		const change = this.changes.get(id);
+		if (change) {
+			change.reverted = false;
+		}
 	}
 
 	clearChange(id: string): void {

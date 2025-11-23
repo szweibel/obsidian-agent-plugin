@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, ItemView, TFile, Notice, MarkdownRenderer } from 'obsidian';
+import { Plugin, WorkspaceLeaf, ItemView, TFile, Notice, MarkdownRenderer, MarkdownView } from 'obsidian';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import * as fs from 'fs/promises';
@@ -597,8 +597,34 @@ export default class ObsidianAgentPlugin extends Plugin {
 
     console.log('[ObsidianAgent] Calling Agent SDK query...');
 
-    // Combine BASE_PROMPT with user's customWorkflow and replace VAULT_PATH
-    const systemPrompt = `${BASE_PROMPT}\n\n${this.settings.customWorkflow}`.replace(/VAULT_PATH/g, this.vaultPath);
+    // Capture active note context
+    let activeContext = '';
+    const activeFile = this.app.workspace.getActiveFile();
+
+    if (activeFile) {
+      activeContext = `\n\n--- Active Obsidian Context ---\nCurrently active file: ${activeFile.path}`;
+
+      // Try to get the active markdown view for editor access
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (activeView) {
+        const editor = activeView.editor;
+
+        // Get cursor position
+        const cursor = editor.getCursor();
+        activeContext += `\nCursor position: Line ${cursor.line + 1}, Column ${cursor.ch}`;
+
+        // Get selection if any
+        const selection = editor.getSelection();
+        if (selection && selection.trim()) {
+          activeContext += `\nSelected text:\n${selection}`;
+        }
+      }
+    } else {
+      activeContext = '\n\n--- Active Obsidian Context ---\nNo file currently open';
+    }
+
+    // Combine BASE_PROMPT with user's customWorkflow, active context, and replace VAULT_PATH
+    const systemPrompt = `${BASE_PROMPT}\n\n${this.settings.customWorkflow}${activeContext}`.replace(/VAULT_PATH/g, this.vaultPath);
 
     const queryOptions: any = {
       pathToClaudeCodeExecutable: this.settings.claudeCodePath || undefined,
@@ -889,7 +915,8 @@ class AgentChatView extends ItemView {
           if (!currentTextContainer || !currentSectionText.trim()) return;
 
           currentTextContainer.empty();
-          await MarkdownRenderer.renderMarkdown(
+          await MarkdownRenderer.render(
+            this.plugin.app,
             currentSectionText,
             currentTextContainer,
             '/',
@@ -1050,8 +1077,9 @@ class AgentChatView extends ItemView {
 
                   // Re-create the tool element with the result
                   if (toolData.element) {
+                    const oldElement = toolData.element; // Save reference before createToolUseElement overwrites it
                     const newElement = this.createToolUseElement(toolData);
-                    toolData.element.replaceWith(newElement);
+                    oldElement.replaceWith(newElement);
                   }
 
                   console.log('[ObsidianAgent] Updated tool result for:', toolData.name);
@@ -1132,9 +1160,21 @@ class AgentChatView extends ItemView {
       div.style.overflow = 'visible';
       div.style.maxHeight = 'none';
     });
+
+    // Wrap tables in scrollable containers for horizontal overflow
+    const allTables = element.querySelectorAll('table');
+    allTables.forEach((table: HTMLTableElement) => {
+      // Skip if already wrapped
+      if (table.parentElement?.classList.contains('table-wrapper')) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'table-wrapper';
+      table.parentElement?.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    });
   }
 
-  async revertChange(fileChange: FileChange): Promise<void> {
+  async revertChange(fileChange: FileChange): Promise<boolean> {
     try {
       const file = this.plugin.app.vault.getAbstractFileByPath(fileChange.filePath);
 
@@ -1159,11 +1199,46 @@ class AgentChatView extends ItemView {
         }
       }
 
-      // Clear the change from tracker
-      this.changeTracker.clearChange(fileChange.id);
+      // Mark as reverted instead of clearing
+      this.changeTracker.markAsReverted(fileChange.id);
+      return true;
     } catch (error: any) {
       console.error('[ObsidianAgent] Error reverting change:', error);
       new Notice(`Error reverting change: ${error.message}`);
+      return false;
+    }
+  }
+
+  async restoreChange(fileChange: FileChange): Promise<boolean> {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath(fileChange.filePath);
+
+      if (fileChange.oldContent === null) {
+        // Original operation was file creation, recreate it
+        await this.plugin.app.vault.create(fileChange.filePath, fileChange.newContent);
+        new Notice(`Restored: Created ${fileChange.filePath}`);
+        console.log('[ObsidianAgent] Restored file creation:', fileChange.filePath);
+      } else {
+        // Original operation was file modification, restore new content
+        if (file instanceof TFile) {
+          await this.plugin.app.vault.modify(file, fileChange.newContent);
+          new Notice(`Restored changes to ${fileChange.filePath}`);
+          console.log('[ObsidianAgent] Restored file modification:', fileChange.filePath);
+        } else {
+          // File doesn't exist, create it with new content
+          await this.plugin.app.vault.create(fileChange.filePath, fileChange.newContent);
+          new Notice(`Restored: Created ${fileChange.filePath}`);
+          console.log('[ObsidianAgent] Restored file:', fileChange.filePath);
+        }
+      }
+
+      // Mark as restored (not reverted)
+      this.changeTracker.markAsRestored(fileChange.id);
+      return true;
+    } catch (error: any) {
+      console.error('[ObsidianAgent] Error restoring change:', error);
+      new Notice(`Error restoring change: ${error.message}`);
+      return false;
     }
   }
 
@@ -1191,40 +1266,66 @@ class AgentChatView extends ItemView {
     content.className = 'tool-use-content';
     content.style.display = 'none';
 
-    // Parameters section
-    const paramsSection = document.createElement('div');
-    paramsSection.className = 'tool-use-section';
+    // For Write/Edit operations with diff, show file info prominently
+    const isFileOperation = (toolData.name === 'Write' || toolData.name === 'Edit') && toolData.fileChange;
+    const isReadOperation = toolData.name === 'Read' && toolData.result !== undefined;
 
-    const paramsLabel = document.createElement('div');
-    paramsLabel.className = 'tool-use-section-label';
-    paramsLabel.textContent = 'Parameters:';
+    if (isFileOperation || isReadOperation) {
+      const fileInfoSection = document.createElement('div');
+      fileInfoSection.className = 'tool-use-section tool-use-file-info';
 
-    const paramsValue = document.createElement('pre');
-    paramsValue.className = 'tool-use-json';
-    paramsValue.textContent = JSON.stringify(toolData.input, null, 2);
+      const filePathLabel = document.createElement('div');
+      filePathLabel.className = 'tool-use-section-label';
+      filePathLabel.textContent = `${toolData.name}: ${toolData.input?.file_path || 'unknown'}`;
 
-    paramsSection.appendChild(paramsLabel);
-    paramsSection.appendChild(paramsValue);
-    content.appendChild(paramsSection);
+      fileInfoSection.appendChild(filePathLabel);
+      content.appendChild(fileInfoSection);
+    }
 
-    // Results section (if available)
-    if (toolData.result !== undefined) {
+    // Parameters section (hide for Write/Edit with diff and Read operations)
+    if (!isFileOperation && !isReadOperation) {
+      const paramsSection = document.createElement('div');
+      paramsSection.className = 'tool-use-section';
+
+      const paramsLabel = document.createElement('div');
+      paramsLabel.className = 'tool-use-section-label';
+      paramsLabel.textContent = 'Parameters:';
+
+      const paramsValue = document.createElement('pre');
+      paramsValue.className = 'tool-use-json';
+      paramsValue.textContent = JSON.stringify(toolData.input, null, 2);
+
+      paramsSection.appendChild(paramsLabel);
+      paramsSection.appendChild(paramsValue);
+      content.appendChild(paramsSection);
+    }
+
+    // Results section (if available, hide for Write/Edit with diff)
+    if (toolData.result !== undefined && !isFileOperation) {
       const resultsSection = document.createElement('div');
       resultsSection.className = 'tool-use-section';
 
       const resultsLabel = document.createElement('div');
       resultsLabel.className = 'tool-use-section-label';
-      resultsLabel.textContent = 'Result:';
+      resultsLabel.textContent = isReadOperation ? 'Content:' : 'Result:';
 
       const resultsValue = document.createElement('pre');
-      resultsValue.className = 'tool-use-json';
+      resultsValue.className = isReadOperation ? 'tool-use-file-content' : 'tool-use-json';
 
       // Format result based on type
+      let resultText = '';
       if (typeof toolData.result === 'string') {
-        resultsValue.textContent = toolData.result;
+        resultText = toolData.result;
       } else {
-        resultsValue.textContent = JSON.stringify(toolData.result, null, 2);
+        resultText = JSON.stringify(toolData.result, null, 2);
       }
+
+      // For Read operations, strip system-reminder tags
+      if (isReadOperation) {
+        resultText = resultText.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+      }
+
+      resultsValue.textContent = resultText;
 
       resultsSection.appendChild(resultsLabel);
       resultsSection.appendChild(resultsValue);
@@ -1248,12 +1349,21 @@ class AgentChatView extends ItemView {
 
       const revertButton = document.createElement('button');
       revertButton.className = 'tool-use-revert-button';
-      revertButton.textContent = '↶ Revert';
+      revertButton.textContent = toolData.fileChange.reverted ? '↻ Restore' : '↶ Revert';
       revertButton.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await this.revertChange(toolData.fileChange!);
-        revertButton.disabled = true;
-        revertButton.textContent = '✓ Reverted';
+        let success = false;
+        if (toolData.fileChange!.reverted) {
+          success = await this.restoreChange(toolData.fileChange!);
+          if (success) {
+            revertButton.textContent = '↶ Revert';
+          }
+        } else {
+          success = await this.revertChange(toolData.fileChange!);
+          if (success) {
+            revertButton.textContent = '↻ Restore';
+          }
+        }
       });
 
       diffHeader.appendChild(diffLabel);
@@ -1261,7 +1371,29 @@ class AgentChatView extends ItemView {
 
       const diffValue = document.createElement('pre');
       diffValue.className = 'tool-use-diff';
-      diffValue.textContent = toolData.fileChange.diff;
+
+      // Parse and color diff lines
+      const diffLines = toolData.fileChange.diff.split('\n');
+      diffLines.forEach((line, index) => {
+        const lineSpan = document.createElement('span');
+        lineSpan.className = 'diff-line';
+
+        if (line.startsWith('+ ')) {
+          lineSpan.classList.add('diff-addition');
+        } else if (line.startsWith('- ')) {
+          lineSpan.classList.add('diff-deletion');
+        } else if (line.startsWith('  ')) {
+          lineSpan.classList.add('diff-context');
+        }
+
+        lineSpan.textContent = line;
+        diffValue.appendChild(lineSpan);
+
+        // Add newline except for last line
+        if (index < diffLines.length - 1) {
+          diffValue.appendChild(document.createTextNode('\n'));
+        }
+      });
 
       diffSection.appendChild(diffHeader);
       diffSection.appendChild(diffValue);
@@ -1295,7 +1427,7 @@ class AgentChatView extends ItemView {
 
     if (role === 'assistant') {
       // Render markdown for assistant messages
-      await MarkdownRenderer.renderMarkdown(content, messageEl, '/', this);
+      await MarkdownRenderer.render(this.plugin.app, content, messageEl, '/', this);
 
       // Fix overflow after rendering
       this.fixOverflowOnElement(messageEl);
@@ -1365,7 +1497,6 @@ class AgentChatView extends ItemView {
       .agent-message {
         padding: 12px 16px;
         border-radius: 12px;
-        max-width: 80%;
         overflow-wrap: break-word;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         animation: slideIn 0.2s ease-out;
@@ -1772,10 +1903,39 @@ class AgentChatView extends ItemView {
         color: var(--text-normal);
       }
 
-      .tool-use-diff::before {
-        content: '';
-        display: block;
-        margin-bottom: 8px;
+      .diff-line {
+        display: inline;
+      }
+
+      .diff-addition {
+        background-color: rgba(46, 160, 67, 0.2);
+        color: #4caf50;
+      }
+
+      .diff-deletion {
+        background-color: rgba(248, 81, 73, 0.2);
+        color: #f44336;
+      }
+
+      .diff-context {
+        color: var(--text-muted);
+      }
+
+      /* File content styling (for Read tool) */
+      .tool-use-file-content {
+        margin: 0;
+        padding: 12px;
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 4px;
+        font-family: var(--font-monospace);
+        font-size: 0.85em;
+        line-height: 1.6;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        color: var(--text-normal);
+        max-height: 400px;
+        overflow-y: auto;
       }
 
       /* Revert button */
@@ -1797,17 +1957,108 @@ class AgentChatView extends ItemView {
         border-color: var(--interactive-accent);
       }
 
-      .tool-use-revert-button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-        background: var(--background-modifier-success);
-        color: var(--text-on-accent);
-        border-color: var(--background-modifier-success);
+      /* Table styling */
+      .agent-message.assistant .table-wrapper {
+        overflow-x: auto;
+        max-width: 100%;
+        margin: 0.5em 0;
       }
 
-      .tool-use-revert-button:disabled:hover {
-        background: var(--background-modifier-success);
-        border-color: var(--background-modifier-success);
+      .agent-message.assistant table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.9em;
+        min-width: 200px;
+      }
+
+      .agent-message.assistant th,
+      .agent-message.assistant td {
+        border: 1px solid var(--background-modifier-border);
+        padding: 8px 12px;
+        text-align: left;
+        word-break: normal;
+      }
+
+      .agent-message.assistant th {
+        background: var(--background-primary-alt);
+        font-weight: 600;
+      }
+
+      .agent-message.assistant tr:nth-child(even) {
+        background: var(--background-primary);
+      }
+
+      .agent-message.assistant tr:hover {
+        background: var(--background-modifier-hover);
+      }
+
+      /* Blockquote styling */
+      .agent-message.assistant blockquote {
+        margin: 0.5em 0;
+        padding: 0.5em 1em;
+        border-left: 3px solid var(--interactive-accent);
+        background: var(--background-primary);
+        border-radius: 0 4px 4px 0;
+      }
+
+      .agent-message.assistant blockquote p {
+        margin: 0;
+      }
+
+      /* Code block styling */
+      .agent-message.assistant pre {
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 6px;
+        padding: 12px;
+        margin: 0.5em 0;
+      }
+
+      .agent-message.assistant pre code {
+        background: none;
+        padding: 0;
+        border-radius: 0;
+        font-size: 0.85em;
+        line-height: 1.5;
+      }
+
+      /* Inline code styling */
+      .agent-message.assistant code {
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 4px;
+        padding: 0.1em 0.4em;
+        font-size: 0.9em;
+      }
+
+      /* External link styling */
+      .agent-message.assistant a:not(.internal-link) {
+        color: var(--link-color);
+        text-decoration: none;
+      }
+
+      .agent-message.assistant a:not(.internal-link):hover {
+        text-decoration: underline;
+      }
+
+      .agent-message.assistant a:not(.internal-link)::after {
+        content: '↗';
+        font-size: 0.7em;
+        margin-left: 2px;
+        opacity: 0.7;
+      }
+
+      /* Horizontal rule styling */
+      .agent-message.assistant hr {
+        border: none;
+        border-top: 1px solid var(--background-modifier-border);
+        margin: 1em 0;
+      }
+
+      /* Task list checkbox styling */
+      .agent-message.assistant input[type="checkbox"] {
+        margin-right: 6px;
+        accent-color: var(--interactive-accent);
       }
     `;
     document.head.appendChild(style);

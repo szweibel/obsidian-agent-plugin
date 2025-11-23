@@ -28,3 +28,6 @@ OPENALEX*.md
 # Temp and local files
 .temp-uploads/
 *.local.*
+
+# Environment variables (API keys, secrets)
+.env
