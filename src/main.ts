@@ -557,7 +557,13 @@ export default class ObsidianAgentPlugin extends Plugin {
     }
   }
 
-  async sendQuery(userQuery: string, sessionId?: string, abortSignal?: AbortSignal, attachment?: { name: string; data: string; type: string }): Promise<AsyncIterable<any>> {
+  async sendQuery(
+    userQuery: string,
+    sessionId?: string,
+    abortSignal?: AbortSignal,
+    attachment?: { name: string; data: string; type: string },
+    editApprovalCallback?: (toolName: string, input: any) => Promise<boolean>
+  ): Promise<AsyncIterable<any>> {
     console.log('[ObsidianAgent] Starting query:', userQuery);
     if (attachment) {
       console.log('[ObsidianAgent] With attachment:', attachment.name, attachment.type);
@@ -628,7 +634,7 @@ export default class ObsidianAgentPlugin extends Plugin {
 
     const queryOptions: any = {
       pathToClaudeCodeExecutable: this.settings.claudeCodePath || undefined,
-      permissionMode: 'bypassPermissions',
+      permissionMode: this.settings.requireEditApproval ? 'default' : 'bypassPermissions',
       systemPrompt: systemPrompt,
       cwd: this.vaultPath,  // Set working directory for Claude Code CLI
       mcpServers: {
@@ -636,6 +642,24 @@ export default class ObsidianAgentPlugin extends Plugin {
       },
       includePartialMessages: true,  // Enable streaming for real-time tool display
     };
+
+    // Add canUseTool callback when edit approval is required
+    if (this.settings.requireEditApproval && editApprovalCallback) {
+      queryOptions.canUseTool = async (toolName: string, input: Record<string, unknown>) => {
+        // Only prompt for Write/Edit tools
+        if (toolName !== 'Write' && toolName !== 'Edit') {
+          return { behavior: 'allow', updatedInput: input };
+        }
+
+        // Show approval UI and wait for response
+        const approved = await editApprovalCallback(toolName, input);
+        if (approved) {
+          return { behavior: 'allow', updatedInput: input };
+        } else {
+          return { behavior: 'deny', message: 'User declined the edit', interrupt: false };
+        }
+      };
+    }
 
     // If we have a session ID, resume the conversation
     if (sessionId) {
@@ -887,7 +911,19 @@ class AgentChatView extends ItemView {
 
       try {
         console.log('[ObsidianAgent] Getting query stream...');
-        const stream = await this.plugin.sendQuery(queryText, this.sessionId || undefined, this.abortController.signal, fileToSend);
+
+        // Create approval callback for edit operations
+        const editApprovalCallback = async (toolName: string, input: any): Promise<boolean> => {
+          return this.showEditApprovalDialog(toolName, input, messagesContainer);
+        };
+
+        const stream = await this.plugin.sendQuery(
+          queryText,
+          this.sessionId || undefined,
+          this.abortController.signal,
+          fileToSend,
+          editApprovalCallback
+        );
         console.log('[ObsidianAgent] Query stream obtained, processing events...');
         let fullResponse = '';
         this.currentToolUses.clear(); // Clear tool uses from previous query
@@ -1321,6 +1357,104 @@ class AgentChatView extends ItemView {
     }
   }
 
+  async showEditApprovalDialog(toolName: string, input: any, messagesContainer: HTMLElement): Promise<boolean> {
+    return new Promise((resolve) => {
+      const filePath = input?.file_path || 'unknown file';
+
+      // Create approval dialog in the chat
+      const dialogEl = messagesContainer.createDiv('edit-approval-dialog');
+
+      const headerEl = dialogEl.createDiv('edit-approval-header');
+      headerEl.setText(`📝 ${toolName} Request`);
+
+      const fileEl = dialogEl.createDiv('edit-approval-file');
+      fileEl.setText(`File: ${filePath}`);
+
+      // Show diff preview
+      const previewEl = dialogEl.createDiv('edit-approval-preview');
+      if (toolName === 'Edit' && input?.old_string !== undefined && input?.new_string !== undefined) {
+        const diffEl = this.createDiffElement(input.old_string, input.new_string, { maxLines: 30 });
+        previewEl.appendChild(diffEl);
+      } else if (toolName === 'Write' && input?.content) {
+        // For Write, show as all additions (from empty)
+        const diffEl = this.createDiffElement('', input.content, { maxLines: 30 });
+        previewEl.appendChild(diffEl);
+      }
+
+      // Buttons
+      const buttonsEl = dialogEl.createDiv('edit-approval-buttons');
+
+      const approveBtn = buttonsEl.createEl('button', { text: 'Approve', cls: 'mod-cta' });
+      approveBtn.addEventListener('click', () => {
+        dialogEl.remove();
+        resolve(true);
+      });
+
+      const denyBtn = buttonsEl.createEl('button', { text: 'Deny' });
+      denyBtn.addEventListener('click', () => {
+        dialogEl.remove();
+        resolve(false);
+      });
+
+      // Scroll to dialog
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    });
+  }
+
+  escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  /**
+   * Create a clean diff element showing only changes
+   */
+  createDiffElement(oldContent: string, newContent: string, options?: { maxLines?: number }): HTMLElement {
+    const maxLines = options?.maxLines || 30;
+
+    const diffResult = this.changeTracker.generateFormattedDiff(oldContent, newContent);
+    const allLines = diffResult.split('\n');
+
+    // Only show additions and deletions, skip context
+    const changedLines = allLines.filter(l => l.startsWith('+ ') || l.startsWith('- '));
+
+    const container = document.createElement('div');
+    container.className = 'improved-diff';
+
+    const displayLines = changedLines.slice(0, maxLines);
+
+    displayLines.forEach((line) => {
+      const lineEl = document.createElement('div');
+      lineEl.className = 'diff-line';
+
+      if (line.startsWith('+ ')) {
+        lineEl.classList.add('diff-addition');
+        const content = line.substring(2); // Remove "+ " prefix
+        lineEl.textContent = content || ' '; // Preserve empty lines
+      } else if (line.startsWith('- ')) {
+        lineEl.classList.add('diff-deletion');
+        const content = line.substring(2); // Remove "- " prefix
+        lineEl.textContent = content || ' '; // Preserve empty lines
+      }
+
+      container.appendChild(lineEl);
+    });
+
+    // Show truncation notice if needed
+    if (changedLines.length > maxLines) {
+      const truncateEl = document.createElement('div');
+      truncateEl.className = 'diff-truncated';
+      truncateEl.textContent = `... ${changedLines.length - maxLines} more lines`;
+      container.appendChild(truncateEl);
+    }
+
+    return container;
+  }
+
   createToolUseElement(toolData: ToolUseData): HTMLElement {
     const container = document.createElement('div');
     container.className = 'tool-use-container';
@@ -1459,34 +1593,15 @@ class AgentChatView extends ItemView {
       diffHeader.appendChild(diffLabel);
       diffHeader.appendChild(revertButton);
 
-      const diffValue = document.createElement('pre');
-      diffValue.className = 'tool-use-diff';
-
-      // Parse and color diff lines
-      const diffLines = toolData.fileChange.diff.split('\n');
-      diffLines.forEach((line, index) => {
-        const lineSpan = document.createElement('span');
-        lineSpan.className = 'diff-line';
-
-        if (line.startsWith('+ ')) {
-          lineSpan.classList.add('diff-addition');
-        } else if (line.startsWith('- ')) {
-          lineSpan.classList.add('diff-deletion');
-        } else if (line.startsWith('  ')) {
-          lineSpan.classList.add('diff-context');
-        }
-
-        lineSpan.textContent = line;
-        diffValue.appendChild(lineSpan);
-
-        // Add newline except for last line
-        if (index < diffLines.length - 1) {
-          diffValue.appendChild(document.createTextNode('\n'));
-        }
-      });
+      // Use improved diff element
+      const diffEl = this.createDiffElement(
+        toolData.fileChange.oldContent || '',
+        toolData.fileChange.newContent,
+        { maxLines: 50 }
+      );
 
       diffSection.appendChild(diffHeader);
-      diffSection.appendChild(diffValue);
+      diffSection.appendChild(diffEl);
       content.appendChild(diffSection);
     }
 
@@ -2169,6 +2284,165 @@ class AgentChatView extends ItemView {
       .agent-message.assistant input[type="checkbox"] {
         margin-right: 6px;
         accent-color: var(--interactive-accent);
+      }
+
+      /* List styling for plans and todos */
+      .agent-message.assistant ul {
+        list-style-type: disc;
+        padding-left: 1.5em;
+        margin: 0.5em 0;
+      }
+
+      .agent-message.assistant ol {
+        list-style-type: decimal;
+        padding-left: 1.5em;
+        margin: 0.5em 0;
+      }
+
+      .agent-message.assistant ul ul,
+      .agent-message.assistant ol ul {
+        list-style-type: circle;
+      }
+
+      .agent-message.assistant ul ul ul,
+      .agent-message.assistant ol ol ul {
+        list-style-type: square;
+      }
+
+      .agent-message.assistant li {
+        margin: 0.25em 0;
+      }
+
+      /* Headers in messages */
+      .agent-message.assistant h1,
+      .agent-message.assistant h2,
+      .agent-message.assistant h3 {
+        margin-top: 1em;
+        margin-bottom: 0.5em;
+        border-bottom: 1px solid var(--background-modifier-border);
+        padding-bottom: 4px;
+      }
+
+      .agent-message.assistant h1 { font-size: 1.4em; }
+      .agent-message.assistant h2 { font-size: 1.2em; }
+      .agent-message.assistant h3 { font-size: 1.1em; }
+
+      /* Edit approval dialog */
+      .edit-approval-dialog {
+        background: var(--background-secondary);
+        border: 2px solid var(--interactive-accent);
+        border-radius: 8px;
+        padding: 16px;
+        margin: 12px 0;
+      }
+
+      .edit-approval-header {
+        font-weight: 600;
+        font-size: 1.1em;
+        margin-bottom: 8px;
+      }
+
+      .edit-approval-file {
+        color: var(--text-muted);
+        font-family: var(--font-monospace);
+        font-size: 0.9em;
+        margin-bottom: 12px;
+      }
+
+      .edit-approval-preview {
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 4px;
+        padding: 12px;
+        margin-bottom: 12px;
+        font-family: var(--font-monospace);
+        font-size: 0.85em;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .edit-preview-label {
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+      }
+
+      .edit-preview-old {
+        background: rgba(255, 100, 100, 0.1);
+        padding: 8px;
+        border-radius: 4px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .edit-preview-arrow {
+        text-align: center;
+        padding: 4px;
+        color: var(--text-muted);
+      }
+
+      .edit-preview-new {
+        background: rgba(100, 255, 100, 0.1);
+        padding: 8px;
+        border-radius: 4px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .edit-preview-content {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .edit-approval-buttons {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .edit-approval-buttons button {
+        padding: 6px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      /* Clean diff styling */
+      .improved-diff {
+        font-family: var(--font-monospace);
+        font-size: 0.85em;
+        border-radius: 4px;
+      }
+
+      .improved-diff .diff-line {
+        display: block;
+        padding: 1px 8px;
+        border-left: 3px solid transparent;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 1.4em;
+      }
+
+      .improved-diff .diff-line.diff-addition {
+        background: rgba(46, 160, 67, 0.15);
+        border-left-color: #22863a;
+      }
+
+      .improved-diff .diff-line.diff-deletion {
+        background: rgba(248, 81, 73, 0.15);
+        border-left-color: #cb2431;
+        text-decoration: line-through;
+        opacity: 0.7;
+      }
+
+      .improved-diff .diff-line:empty::after {
+        content: ' ';
+      }
+
+      .diff-truncated {
+        padding: 4px 8px;
+        color: var(--text-muted);
+        font-style: italic;
+        font-size: 0.9em;
       }
     `;
     document.head.appendChild(style);

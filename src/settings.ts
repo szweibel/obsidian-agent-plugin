@@ -9,6 +9,7 @@ export interface ObsidianAgentSettings {
   claudeCodePath: string;
   customWorkflow: string;
   customMcpConfigPath: string;
+  requireEditApproval: boolean;
 }
 
 // This is the editable workflow section
@@ -86,6 +87,7 @@ export const DEFAULT_SETTINGS: ObsidianAgentSettings = {
   claudeCodePath: '',
   customWorkflow: DEFAULT_WORKFLOW,
   customMcpConfigPath: '',
+  requireEditApproval: false,
 };
 
 export class ObsidianAgentSettingTab extends PluginSettingTab {
@@ -124,6 +126,17 @@ export class ObsidianAgentSettingTab extends PluginSettingTab {
           } else {
             alert('Claude Code CLI not found. Please install Claude Code or set the path manually.');
           }
+        }));
+
+    // Require Edit Approval
+    new Setting(containerEl)
+      .setName('Require Edit Approval')
+      .setDesc('When enabled, you must approve file edits before they are applied')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.requireEditApproval)
+        .onChange(async (value) => {
+          this.plugin.settings.requireEditApproval = value;
+          await this.plugin.saveSettings();
         }));
 
     // Custom Tools Config
