@@ -946,7 +946,36 @@ class AgentChatView extends ItemView {
         };
 
         for await (const event of stream) {
-          console.log('[ObsidianAgent] Stream event:', event.type, 'subtype:', event.subtype, event);
+          console.log('[ObsidianAgent] Stream event:', event.type, 'subtype:', (event as any).subtype);
+
+          // Handle streaming text deltas for real-time display
+          if (event.type === 'stream_event') {
+            const streamEvent = (event as any).event;
+
+            if (streamEvent?.type === 'content_block_delta' &&
+                streamEvent?.delta?.type === 'text_delta') {
+              const textDelta = streamEvent.delta.text;
+
+              // Hide thinking indicator
+              if (loadingEl.isConnected) {
+                loadingEl.style.display = 'none';
+              }
+              assistantEl.style.display = '';
+
+              // Create text container if needed
+              if (!currentTextContainer) {
+                currentTextContainer = assistantEl.createDiv('assistant-text-content');
+              }
+
+              // Accumulate text
+              fullResponse += textDelta;
+              currentSectionText += textDelta;
+
+              // Render immediately for real-time streaming
+              await performRender();
+              lastWasToolUse = false;
+            }
+          }
 
           // Capture session ID from first system init event
           if (event.type === 'system' && event.subtype === 'init' && !this.sessionId) {
@@ -999,30 +1028,14 @@ class AgentChatView extends ItemView {
           }
 
           if (event.type === 'assistant') {
-            // Extract text from message content
+            // Extract content from message
             const message = event.message;
             if (message.content && Array.isArray(message.content)) {
-              // Process each block incrementally
+              // Process each block
               for (const block of message.content) {
                 if (block.type === 'text') {
-                  fullResponse += block.text;
-                  currentSectionText += block.text;
-
-                  // Hide thinking indicator when we get text content
-                  if (loadingEl.isConnected) {
-                    loadingEl.style.display = 'none';
-                  }
-                  // Show assistant element now that we have content
-                  assistantEl.style.display = '';
-
-                  // Create text container if needed
-                  if (!currentTextContainer) {
-                    currentTextContainer = assistantEl.createDiv('assistant-text-content');
-                  }
-
-                  // Schedule debounced render
-                  scheduleRender();
-
+                  // Text already handled by stream_event - skip to avoid duplication
+                  // The stream_event handler renders text token-by-token in real-time
                   lastWasToolUse = false;
                 } else if (block.type === 'tool_use') {
                   // Force immediate render of pending text before tool
