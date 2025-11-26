@@ -634,6 +634,7 @@ export default class ObsidianAgentPlugin extends Plugin {
       mcpServers: {
         obsidian: server,
       },
+      includePartialMessages: true,  // Enable streaming for real-time tool display
     };
 
     // If we have a session ID, resume the conversation
@@ -892,6 +893,7 @@ class AgentChatView extends ItemView {
         this.currentToolUses.clear(); // Clear tool uses from previous query
 
         const assistantEl = messagesContainer.createDiv('agent-message assistant');
+        assistantEl.style.display = 'none';  // Hide until content arrives
         let lastWasToolUse = false;
         let currentTextContainer: HTMLElement | null = null;
         let currentSectionText = '';
@@ -952,6 +954,50 @@ class AgentChatView extends ItemView {
             console.log('[ObsidianAgent] Session started:', this.sessionId);
           }
 
+          // Handle tool progress events - shows tools while they're executing
+          if (event.type === 'tool_progress') {
+            const toolId = (event as any).tool_use_id;
+            const toolName = (event as any).tool_name;
+            const elapsedTime = (event as any).elapsed_time_seconds;
+
+            console.log('[ObsidianAgent] Tool progress:', toolName, `${elapsedTime.toFixed(1)}s`);
+
+            // Update existing tool element with progress, or create one if not yet shown
+            let toolData = this.currentToolUses.get(toolId);
+            if (toolData && toolData.element) {
+              // Update progress indicator on existing element
+              const progressEl = toolData.element.querySelector('.tool-use-progress');
+              if (progressEl) {
+                progressEl.textContent = `${elapsedTime.toFixed(1)}s`;
+              }
+            } else if (!toolData) {
+              // Tool wasn't shown yet - create a placeholder
+              toolData = {
+                id: toolId,
+                name: toolName,
+                input: {},
+                isExpanded: false,
+              };
+              this.currentToolUses.set(toolId, toolData);
+
+              // Hide thinking indicator, show assistant element
+              if (loadingEl.isConnected) {
+                loadingEl.style.display = 'none';
+              }
+              assistantEl.style.display = '';
+
+              // Create and append tool element
+              const toolElement = this.createToolUseElement(toolData);
+              assistantEl.appendChild(toolElement);
+
+              // Reset text container for any text that follows
+              currentTextContainer = null;
+              currentSectionText = '';
+
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+          }
+
           if (event.type === 'assistant') {
             // Extract text from message content
             const message = event.message;
@@ -966,6 +1012,8 @@ class AgentChatView extends ItemView {
                   if (loadingEl.isConnected) {
                     loadingEl.style.display = 'none';
                   }
+                  // Show assistant element now that we have content
+                  assistantEl.style.display = '';
 
                   // Create text container if needed
                   if (!currentTextContainer) {
@@ -979,62 +1027,78 @@ class AgentChatView extends ItemView {
                 } else if (block.type === 'tool_use') {
                   // Force immediate render of pending text before tool
                   await performRender();
+                  // Show assistant element for tool use
+                  assistantEl.style.display = '';
 
                   // Track tool use and create component
                   const toolId = block.id || `tool_${Date.now()}_${Math.random()}`;
-                  if (!this.currentToolUses.has(toolId)) {
-                    const toolData: ToolUseData = {
+                  let toolData = this.currentToolUses.get(toolId);
+                  const existedFromProgress = !!toolData;
+
+                  if (!toolData) {
+                    toolData = {
                       id: toolId,
                       name: block.name,
                       input: block.input,
                       isExpanded: false,
                     };
+                  } else {
+                    // Update existing entry with full input data from assistant message
+                    toolData.input = block.input;
+                  }
 
-                    // Capture file state before Write/Edit operations
-                    if (block.name === 'Write' || block.name === 'Edit') {
-                      const filePath = block.input?.file_path;
-                      if (filePath) {
-                        try {
-                          // Try to read current file content
-                          const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-                          if (file instanceof TFile) {
-                            toolData.fileStateBefore = await this.plugin.app.vault.read(file);
-                          } else {
-                            // File doesn't exist yet (new file)
-                            toolData.fileStateBefore = null;
-                          }
-                        } catch (error) {
-                          console.log('[ObsidianAgent] Could not read file before change:', error);
+                  // Capture file state before Write/Edit operations
+                  if (block.name === 'Write' || block.name === 'Edit') {
+                    const filePath = block.input?.file_path;
+                    if (filePath && toolData.fileStateBefore === undefined) {
+                      try {
+                        // Try to read current file content
+                        const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+                        if (file instanceof TFile) {
+                          toolData.fileStateBefore = await this.plugin.app.vault.read(file);
+                        } else {
+                          // File doesn't exist yet (new file)
                           toolData.fileStateBefore = null;
                         }
+                      } catch (error) {
+                        console.log('[ObsidianAgent] Could not read file before change:', error);
+                        toolData.fileStateBefore = null;
                       }
                     }
+                  }
 
-                    this.currentToolUses.set(toolId, toolData);
+                  this.currentToolUses.set(toolId, toolData);
 
-                    // Append tool component
+                  if (existedFromProgress && toolData.element) {
+                    // Preserve current progress time before rebuilding
+                    const progressEl = toolData.element.querySelector('.tool-use-progress');
+                    const currentProgressText = progressEl?.textContent || 'running...';
+
+                    // Update existing element with full input data
+                    const oldElement = toolData.element;
+                    const newElement = this.createToolUseElement(toolData);
+                    oldElement.replaceWith(newElement);
+
+                    // Restore progress time
+                    const newProgressEl = newElement.querySelector('.tool-use-progress');
+                    if (newProgressEl && currentProgressText !== 'running...') {
+                      newProgressEl.textContent = currentProgressText;
+                    }
+                  } else if (!existedFromProgress) {
+                    // Append new tool component
                     const toolElement = this.createToolUseElement(toolData);
                     assistantEl.appendChild(toolElement);
-
-                    // Next text will go in a new container with fresh text
-                    currentTextContainer = null;
-                    currentSectionText = '';
                   }
+
+                  // Next text will go in a new container with fresh text
+                  currentTextContainer = null;
+                  currentSectionText = '';
                   lastWasToolUse = true;
                 }
               }
 
-              // Show thinking indicator after tool use (agent is processing results)
-              if (lastWasToolUse && loadingEl.isConnected) {
-                loadingEl.style.display = '';
-                // Wait for layout to update before scrolling
-                requestAnimationFrame(() => {
-                  messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                });
-              } else {
-                // Scroll to bottom after rendering
-                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-              }
+              // Scroll to bottom after rendering
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
           }
 
@@ -1082,6 +1146,8 @@ class AgentChatView extends ItemView {
                     oldElement.replaceWith(newElement);
                   }
 
+                  // Scroll to show completed tool
+                  messagesContainer.scrollTop = messagesContainer.scrollHeight;
                   console.log('[ObsidianAgent] Updated tool result for:', toolData.name);
                 }
               }
@@ -1260,6 +1326,17 @@ class AgentChatView extends ItemView {
 
     header.appendChild(chevron);
     header.appendChild(toolName);
+
+    // Add progress indicator (visible while tool is executing)
+    if (!toolData.result) {
+      const progressSpan = document.createElement('span');
+      progressSpan.className = 'tool-use-progress';
+      progressSpan.textContent = 'running...';
+      header.appendChild(progressSpan);
+      container.classList.add('executing');
+    } else {
+      container.classList.add('completed');
+    }
 
     // Create collapsible content
     const content = document.createElement('div');
@@ -1735,6 +1812,26 @@ class AgentChatView extends ItemView {
       .tool-use-name {
         font-size: 0.9em;
         font-weight: 500;
+      }
+
+      .tool-use-progress {
+        margin-left: auto;
+        font-size: 0.8em;
+        color: var(--text-muted);
+        font-weight: normal;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+
+      .tool-use-container.executing {
+        border-left: 3px solid var(--interactive-accent);
+      }
+
+      .tool-use-container.completed {
+        border-left: 3px solid var(--color-green, #4caf50);
+      }
+
+      .tool-use-container.completed .tool-use-progress {
+        display: none;
       }
 
       .tool-use-content {
