@@ -206,6 +206,16 @@ export default class ObsidianAgentPlugin extends Plugin {
               stderr += data.toString();
             });
 
+            proc.on('error', (error: Error) => {
+              console.error(`[ObsidianAgent] Tool ${toolDef.name} spawn error:`, error);
+              resolve({
+                content: [{
+                  type: 'text' as const,
+                  text: `Error executing ${toolDef.name}: ${error.message}`,
+                }],
+              });
+            });
+
             proc.on('close', (code: number) => {
               if (code !== 0) {
                 console.error(`[ObsidianAgent] Tool ${toolDef.name} failed:`, stderr);
@@ -1782,77 +1792,7 @@ class AgentChatView extends ItemView {
         display: none;
       }
 
-      /* Tool indicators - small paragraph with moderate spacing */
-      .agent-message.assistant p:has(em:first-child) {
-        margin-bottom: 0.25em;
-        font-size: 0.95em;
-        opacity: 0.85;
-      }
-
-      .agent-message.assistant p em {
-        display: inline;
-        margin: 0;
-        padding: 0;
-      }
-
-      .agent-message.assistant ul,
-      .agent-message.assistant ol {
-        margin: 0;
-        margin-bottom: 0.1em;
-        padding-left: 1.5em;
-        line-height: 1.3;
-      }
-
-      .agent-message.assistant li {
-        margin: 0;
-        padding: 0;
-        line-height: 1.3;
-      }
-
-      .agent-message.assistant li:last-child {
-        margin-bottom: 0;
-      }
-
-      .agent-message.assistant li p {
-        margin: 0;
-        display: inline;
-      }
-
-      .agent-message.assistant h1,
-      .agent-message.assistant h2,
-      .agent-message.assistant h3,
-      .agent-message.assistant h4 {
-        margin: 0;
-        margin-top: 0.3em;
-        margin-bottom: 0.1em;
-      }
-
-      .agent-message.assistant h1:first-child,
-      .agent-message.assistant h2:first-child,
-      .agent-message.assistant h3:first-child,
-      .agent-message.assistant h4:first-child {
-        margin-top: 0;
-      }
-
-      .agent-message.assistant code {
-        margin: 0;
-        padding: 0.1em 0.3em;
-        word-break: break-all;
-        white-space: pre-wrap;
-      }
-
-      .agent-message.assistant pre {
-        margin: 0;
-        margin-bottom: 0.15em;
-        overflow-x: auto;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        max-width: 100%;
-      }
-
-      .agent-message.assistant pre:last-child {
-        margin-bottom: 0;
-      }
+      /* Code styling moved to single section below */
 
       /* Obsidian markdown wrapper divs - remove extra spacing */
       .agent-message.assistant .markdown-preview-section,
@@ -2230,17 +2170,26 @@ class AgentChatView extends ItemView {
         margin: 0;
       }
 
-      /* Code block styling */
+      /* Code block styling (pre) */
       .agent-message.assistant pre {
         background: var(--background-primary);
         border: 1px solid var(--background-modifier-border);
         border-radius: 6px;
         padding: 12px;
         margin: 0.5em 0;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-width: 100%;
+      }
+
+      .agent-message.assistant pre:last-child {
+        margin-bottom: 0;
       }
 
       .agent-message.assistant pre code {
         background: none;
+        border: none;
         padding: 0;
         border-radius: 0;
         font-size: 0.85em;
@@ -2254,6 +2203,8 @@ class AgentChatView extends ItemView {
         border-radius: 4px;
         padding: 0.1em 0.4em;
         font-size: 0.9em;
+        word-break: break-all;
+        white-space: pre-wrap;
       }
 
       /* External link styling */
