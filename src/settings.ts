@@ -10,6 +10,7 @@ export interface ObsidianAgentSettings {
   customWorkflow: string;
   customMcpConfigPath: string;
   requireEditApproval: boolean;
+  enableProseLinting: boolean;
 }
 
 // This is the editable workflow section
@@ -88,6 +89,7 @@ export const DEFAULT_SETTINGS: ObsidianAgentSettings = {
   customWorkflow: DEFAULT_WORKFLOW,
   customMcpConfigPath: '',
   requireEditApproval: false,
+  enableProseLinting: true,
 };
 
 export class ObsidianAgentSettingTab extends PluginSettingTab {
@@ -136,6 +138,17 @@ export class ObsidianAgentSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.requireEditApproval)
         .onChange(async (value) => {
           this.plugin.settings.requireEditApproval = value;
+          await this.plugin.saveSettings();
+        }));
+
+    // Prose Linting
+    new Setting(containerEl)
+      .setName('Enable Prose Linting')
+      .setDesc('Analyze notes for style issues and AI-isms (overused AI phrases like "delve", "crucial", "it\'s important to note")')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableProseLinting)
+        .onChange(async (value) => {
+          this.plugin.settings.enableProseLinting = value;
           await this.plugin.saveSettings();
         }));
 

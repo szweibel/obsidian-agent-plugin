@@ -5,7 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "node esbuild.config.mjs",
-    "build:dev": "node esbuild.config.mjs && cp dist/main.js '/mnt/c/Users/onepe/Documents/Obsidian Vault/.obsidian/plugins/obsidian-agent/main.js' && echo 'Build copied to Obsidian'",
+    "build:dev": "node esbuild.config.mjs && mkdir -p '/Users/stephenzweibel/Documents/Steve/.obsidian/plugins/obsidian-agent' && cp dist/main.js manifest.json '/Users/stephenzweibel/Documents/Steve/.obsidian/plugins/obsidian-agent/' && echo 'Build copied to Obsidian'",
     "dev": "node esbuild.config.mjs --watch"
   },
   "keywords": [
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.54",
-    "diff": "^7.0.0"
+    "diff": "^7.0.0",
+    "write-good": "^1.0.8"
   }
 }

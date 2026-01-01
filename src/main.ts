@@ -5,6 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ObsidianAgentSettings, DEFAULT_SETTINGS, ObsidianAgentSettingTab, BASE_PROMPT, detectClaudeCodePath } from './settings';
 import { ChangeTracker, FileChange } from './diff-utils';
+import { lintProse, formatLintSummary } from './prose-lint';
 
 const VIEW_TYPE_AGENT_CHAT = 'agent-chat-view';
 
@@ -633,6 +634,23 @@ export default class ObsidianAgentPlugin extends Plugin {
         const selection = editor.getSelection();
         if (selection && selection.trim()) {
           activeContext += `\nSelected text:\n${selection}`;
+        }
+
+        // Prose linting (if enabled)
+        if (this.settings.enableProseLinting) {
+          try {
+            const fullContent = editor.getValue();
+            if (fullContent && fullContent.trim().length > 0) {
+              const suggestions = lintProse(fullContent);
+              if (suggestions.length > 0) {
+                const lintSummary = formatLintSummary(fullContent, suggestions);
+                activeContext += `\n\n--- Prose Linting Results ---\n${lintSummary}`;
+                console.log('[ObsidianAgent] Prose linting found', suggestions.length, 'issues');
+              }
+            }
+          } catch (err) {
+            console.error('[ObsidianAgent] Prose linting error:', err);
+          }
         }
       }
     } else {
