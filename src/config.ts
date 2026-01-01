@@ -46,6 +46,7 @@ Obsidian-Specific MCP Tools:
 - mcp__obsidian__get_backlinks(page) - Find pages that link TO a specific page
 - mcp__obsidian__get_outgoing_links(page) - Find links that a page links TO
 - mcp__obsidian__get_daily_note(date?) - Get path to daily note (today or specific date)
+- mcp__obsidian__lint_prose(file_path?, text?) - Check text for style issues and AI-isms
 
 Claude Code Built-in Tools:
 - Read(file_path) - Read any file
@@ -93,7 +94,8 @@ export async function detectClaudeCodePath(): Promise<string | null> {
   const possiblePaths = [
     // Linux/Mac
     path.join(process.env.HOME || '', '.local', 'bin', 'claude'),
-    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',  // Homebrew on Apple Silicon
+    '/usr/local/bin/claude',     // Homebrew on Intel Mac / manual install
     '/usr/bin/claude',
     // Windows
     path.join(process.env.USERPROFILE || '', '.local', 'bin', 'claude.exe'),
@@ -103,6 +105,53 @@ export async function detectClaudeCodePath(): Promise<string | null> {
   for (const p of possiblePaths) {
     try {
       await fs.promises.access(p, fs.constants.X_OK);
+
+      // Check if it's a #!/usr/bin/env node script (won't work in GUI apps)
+      const content = await fs.promises.readFile(p, 'utf8');
+      const firstLine = content.split('\n')[0];
+
+      if (firstLine.includes('#!/usr/bin/env node')) {
+        // Need to create a wrapper - find node in same directory or common locations
+        const dir = path.dirname(p);
+        const nodePaths = [
+          path.join(dir, 'node'),  // Same dir (Homebrew)
+          '/opt/homebrew/bin/node',
+          '/usr/local/bin/node',
+          '/usr/bin/node',
+        ];
+
+        let nodePath: string | null = null;
+        for (const np of nodePaths) {
+          try {
+            await fs.promises.access(np, fs.constants.X_OK);
+            nodePath = np;
+            break;
+          } catch {
+            // Continue
+          }
+        }
+
+        if (nodePath) {
+          const wrapperDir = path.join(process.env.HOME || '', '.cache', 'obsidian-agent');
+          const wrapperPath = path.join(wrapperDir, 'claude-wrapper');
+
+          try {
+            await fs.promises.mkdir(wrapperDir, { recursive: true });
+            const wrapperScript = `#!/bin/bash
+# Auto-generated wrapper for Claude Code
+# Bypasses #!/usr/bin/env node which doesn't work in GUI apps
+exec "${nodePath}" "${p}" "$@"
+`;
+            await fs.promises.writeFile(wrapperPath, wrapperScript, { mode: 0o755 });
+            console.log(`[ObsidianAgent] Created wrapper: ${wrapperPath} (node: ${nodePath}, claude: ${p})`);
+            return wrapperPath;
+          } catch (err) {
+            console.warn(`[ObsidianAgent] Failed to create wrapper:`, err);
+            return p;  // Fall back to direct path
+          }
+        }
+      }
+
       return p;
     } catch {
       // Continue checking

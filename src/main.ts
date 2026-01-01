@@ -539,6 +539,66 @@ export default class ObsidianAgentPlugin extends Plugin {
           };
         }
       ),
+
+      tool(
+        'lint_prose',
+        'Analyze text for prose style issues and AI-isms (overused AI phrases). Can lint a specific file or the provided text directly.',
+        z.object({
+          file_path: z.string().optional().describe('Path to markdown file to lint (relative to vault). If not provided, uses the text parameter.'),
+          text: z.string().optional().describe('Text to lint directly. Use this for checking text before writing it.'),
+        }).shape,
+        async ({ file_path, text }) => {
+          console.log('[ObsidianAgent] Tool: lint_prose called', { file_path, text: text?.substring(0, 50) });
+
+          let contentToLint: string;
+          let source: string;
+
+          if (text) {
+            contentToLint = text;
+            source = 'provided text';
+          } else if (file_path) {
+            try {
+              const file = this.app.vault.getAbstractFileByPath(file_path);
+              if (!file || !(file instanceof TFile)) {
+                return {
+                  content: [{
+                    type: 'text' as const,
+                    text: `File not found: ${file_path}`,
+                  }],
+                };
+              }
+              contentToLint = await this.app.vault.read(file);
+              source = file_path;
+            } catch (error: any) {
+              return {
+                content: [{
+                  type: 'text' as const,
+                  text: `Error reading file: ${error.message}`,
+                }],
+              };
+            }
+          } else {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: 'Please provide either file_path or text to lint.',
+              }],
+            };
+          }
+
+          const suggestions = lintProse(contentToLint);
+          const summary = formatLintSummary(contentToLint, suggestions);
+
+          console.log('[ObsidianAgent] Prose linting found', suggestions.length, 'issues in', source);
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Prose linting results for ${source}:\n\n${summary}`,
+            }],
+          };
+        }
+      ),
     ];
 
     // Load and add custom tools
@@ -635,23 +695,6 @@ export default class ObsidianAgentPlugin extends Plugin {
         if (selection && selection.trim()) {
           activeContext += `\nSelected text:\n${selection}`;
         }
-
-        // Prose linting (if enabled)
-        if (this.settings.enableProseLinting) {
-          try {
-            const fullContent = editor.getValue();
-            if (fullContent && fullContent.trim().length > 0) {
-              const suggestions = lintProse(fullContent);
-              if (suggestions.length > 0) {
-                const lintSummary = formatLintSummary(fullContent, suggestions);
-                activeContext += `\n\n--- Prose Linting Results ---\n${lintSummary}`;
-                console.log('[ObsidianAgent] Prose linting found', suggestions.length, 'issues');
-              }
-            }
-          } catch (err) {
-            console.error('[ObsidianAgent] Prose linting error:', err);
-          }
-        }
       }
     } else {
       activeContext = '\n\n--- Active Obsidian Context ---\nNo file currently open';
@@ -669,6 +712,48 @@ export default class ObsidianAgentPlugin extends Plugin {
         obsidian: server,
       },
       includePartialMessages: true,  // Enable streaming for real-time tool display
+      // Post-write prose linting hook
+      ...(this.settings.enableProseLinting && {
+        hooks: {
+          PostToolUse: [{
+            matcher: '^(Write|Edit)$',
+            hooks: [async (input: any) => {
+              try {
+                const filePath = input.tool_input?.file_path;
+                if (!filePath || !filePath.endsWith('.md')) {
+                  return {};  // Only lint markdown files
+                }
+
+                // Read the file that was just written/edited
+                const fullPath = path.join(this.vaultPath, filePath);
+                const content = await fs.readFile(fullPath, 'utf-8');
+
+                if (!content || content.trim().length === 0) {
+                  return {};
+                }
+
+                const suggestions = lintProse(content);
+                if (suggestions.length === 0) {
+                  return {};  // No issues, no feedback needed
+                }
+
+                const summary = formatLintSummary(content, suggestions);
+                console.log('[ObsidianAgent] Post-write lint found', suggestions.length, 'issues in', filePath);
+
+                return {
+                  hookSpecificOutput: {
+                    hookEventName: 'PostToolUse' as const,
+                    additionalContext: `\n\n--- Prose Linting Feedback ---\nThe text you just wrote to ${filePath} has some style issues:\n\n${summary}\n\nConsider revising to address these issues.`,
+                  },
+                };
+              } catch (err) {
+                console.error('[ObsidianAgent] Post-write lint error:', err);
+                return {};
+              }
+            }],
+          }],
+        },
+      }),
     };
 
     // Add canUseTool callback when edit approval is required
