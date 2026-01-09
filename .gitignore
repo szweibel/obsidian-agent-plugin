@@ -24,6 +24,8 @@ openalex*.py
 openalex*.json
 openalex*.md
 OPENALEX*.md
+worldcat*.py
+test_oclc.py
 
 # Temp and local files
 .temp-uploads/

@@ -708,6 +708,8 @@ export default class ObsidianAgentPlugin extends Plugin {
       permissionMode: this.settings.requireEditApproval ? 'default' : 'bypassPermissions',
       systemPrompt: systemPrompt,
       cwd: this.vaultPath,  // Set working directory for Claude Code CLI
+      settingSources: ['user', 'project'],  // Load skills from ~/.claude/skills/ and .claude/skills/
+      allowedTools: ['Skill', 'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'AskUserQuestion'],  // Explicitly enable Skill tool
       mcpServers: {
         obsidian: server,
       },
