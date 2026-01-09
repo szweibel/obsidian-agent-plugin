@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-agent",
+  "name": "Obsidian Agent",
+  "version": "1.2.0",
+  "minAppVersion": "0.15.0",
+  "description": "AI agent powered by Claude Agent SDK for organizing, searching, and maintaining your vault using natural language",
+  "author": "Stephen Zweibel",
+  "authorUrl": "https://github.com/szweibel/obsidian-agent-plugin",
+  "isDesktopOnly": true
+}
